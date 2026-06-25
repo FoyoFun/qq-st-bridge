@@ -639,7 +639,9 @@ async def handle_at_me(event: GroupMessageEvent, text: str = EventPlainText()):
         return
 
     history = _extract_history(chat_data)
-    messages = build_messages(char_data, history, text)
+    # Format user message with RP context: "user对character说，msg"
+    formatted_text = f"{user_name}对{state.character_name}说，{text}"
+    messages = build_messages(char_data, history, formatted_text)
 
     # --- Generate response ---
     try:
