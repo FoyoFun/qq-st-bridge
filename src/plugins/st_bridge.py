@@ -680,7 +680,7 @@ async def handle_at_me(event: GroupMessageEvent, text: str = EventPlainText()):
         return
 
     # --- Save chat to ST ---
-    user_msg = _make_chat_message(user_name, True, text)
+    user_msg = _make_chat_message(user_name, True, formatted_text)
     ai_msg = _make_chat_message(state.character_name, False, response_text)
 
     # Ensure header exists
