@@ -62,6 +62,23 @@ def _get_state(group_id: int) -> GroupState:
     return _group_states[group_id]
 
 # ---------------------------------------------------------------------------
+# QQ号 → 昵称 映射（用于回复中还原QQ号为昵称）
+# ---------------------------------------------------------------------------
+
+_nickname_map: dict[str, str] = {}
+
+def _remember_user(user_id: int, user_name: str) -> None:
+    """记住用户的QQ号→昵称映射。"""
+    _nickname_map[str(user_id)] = user_name
+
+def _replace_qq_with_nickname(text: str) -> str:
+    """将文本中已知的QQ号替换回昵称。"""
+    result = text
+    for qq_id, nickname in _nickname_map.items():
+        result = result.replace(qq_id, nickname)
+    return result
+
+# ---------------------------------------------------------------------------
 # HTTP Client for SillyTavern API
 # ---------------------------------------------------------------------------
 
@@ -532,6 +549,9 @@ async def handle_at_me(event: GroupMessageEvent, text: str = EventPlainText()):
     except Exception:
         user_name = str(user_id)
 
+    # Remember the QQ→nickname mapping for reverse lookup
+    _remember_user(user_id, user_name)
+
     # --- Empty message ---
     if not text:
         if state.character_name:
@@ -639,8 +659,8 @@ async def handle_at_me(event: GroupMessageEvent, text: str = EventPlainText()):
         return
 
     history = _extract_history(chat_data)
-    # Format user message with RP context: "user对char说，msg"
-    formatted_text = f"{user_name}对{state.character_name}说，{text}"
+    # Format user message: "QQ号对char说，msg"
+    formatted_text = f"{user_id}对{state.character_name}说，{text}"
     messages = build_messages(char_data, history, formatted_text)
 
     # --- Generate response ---
@@ -679,7 +699,7 @@ async def handle_at_me(event: GroupMessageEvent, text: str = EventPlainText()):
         await at_me.finish("(AI 返回了空响应，请尝试重新发送。)")
         return
 
-    # --- Save chat to ST ---
+    # --- Save chat to ST (原始AI回复，含QQ号) ---
     user_msg = _make_chat_message(user_name, True, formatted_text)
     ai_msg = _make_chat_message(state.character_name, False, response_text)
 
@@ -691,9 +711,10 @@ async def handle_at_me(event: GroupMessageEvent, text: str = EventPlainText()):
     chat_data.append(ai_msg)
     await st_save_chat(state.avatar_url, state.chat_file, chat_data)
 
-    # --- Reply ---
-    response_text = _truncate(response_text)
-    await at_me.finish(Message(response_text))
+    # --- Reply to QQ (QQ号→昵称) ---
+    display_text = _replace_qq_with_nickname(response_text)
+    display_text = _truncate(display_text)
+    await at_me.finish(Message(display_text))
 
 # ---------------------------------------------------------------------------
 # Lifecycle
