@@ -17,6 +17,8 @@ nb_qq_bot/
 ├── bot.py                  # NoneBot2 入口，注册 OneBot V11 适配器
 ├── pyproject.toml          # 项目元数据 & NoneBot2 配置
 ├── .env                    # 机器人和 ST Bridge 配置
+├── README.md               # 项目说明
+├── CLAUDE.md               # Claude Code 项目上下文
 ├── src/
 │   └── plugins/
 │       ├── README.md       # 插件目录说明
@@ -62,6 +64,9 @@ python bot.py
 @bot /preset XX # 选择预设
 @bot <消息>     # 与 AI 对话
 ```
+
+> **消息格式**：发给 AI 时会用 QQ 号代替昵称（`2254425209对Seraphina说，你好`），
+> 避免奇怪群名污染 AI 理解。AI 回复中的 QQ 号会自动换回昵称再发到群聊。
 
 ## 配置 (.env)
 

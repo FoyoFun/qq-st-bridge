@@ -34,14 +34,15 @@ The plugin is organized into these sections:
 
 1. **Config** — Global variables loaded from `.env` via `driver.config` at startup
 2. **GroupState** — Per-group dataclass: `character_name`, `preset_name`, `avatar_url`, `chat_file`
-3. **StClient** — `httpx.AsyncClient` wrapper for SillyTavern API:
+3. **NicknameMap** — `_nickname_map` (QQ号→昵称) and `_replace_qq_with_nickname()` for reply conversion
+4. **StClient** — `httpx.AsyncClient` wrapper for SillyTavern API:
    - CSRF token management (fetch fresh token before each POST)
    - `st_get_characters()`, `st_get_presets()`, `st_get_character(avatar_url)`
    - `st_load_chat()`, `st_save_chat()`, `st_generate()`
-4. **PromptBuilder** — `build_messages()` constructs the OpenAI-format messages array
-5. **Chat History** — Read/write SillyTavern's JSONL chat files via ST API
-6. **Command handlers** — `/chars`, `/presets`, `/char`, `/preset`, `/status`, `/newchat`, `/clear`, `/help`
-7. **Message handler** — `on_message(rule=to_me() & is_type(GroupMessageEvent))`
+5. **PromptBuilder** — `build_messages()` constructs the OpenAI-format messages array
+6. **Chat History** — Read/write SillyTavern's JSONL chat files via ST API
+7. **Command handlers** — `/chars`, `/presets`, `/char`, `/preset`, `/status`, `/newchat`, `/clear`, `/help`
+8. **Message handler** — `on_message(rule=to_me() & is_type(GroupMessageEvent))`
 
 ### Message Flow (detailed)
 
@@ -52,11 +53,18 @@ The plugin is organized into these sections:
 
 ### User message format
 
-Messages are formatted before sending to AI:
+Messages are formatted before sending to AI using QQ numbers (to avoid weird group nicknames confusing the AI):
 ```
-{user_name}对{character_name}说，{original_text}
+{QQ号}对{character_name}说，{original_text}
 ```
-Example: `张三对Seraphina说，你好`
+Example: `2254425209对Seraphina说，你好`
+
+### QQ号 → 昵称 双向映射
+
+- **发出**: 用 `event.user_id`（QQ号）代替昵称作为发言者标识
+- **返回**: AI 回复中的 QQ 号会自动替换回对应的 QQ 昵称，再发送到群聊
+- 映射存储在全局 `_nickname_map: dict[str, str]` 中，每次收到消息时更新
+- 仅替换已知的 QQ 号，消息原文中的其他名字不受影响
 
 ### SillyTavern API endpoints used
 
@@ -145,3 +153,8 @@ asyncio.run(test())
 
 - `31050cc` — Initial commit: bot + st_bridge plugin
 - `aa3d4c2` — Message format: `user对char说，msg`
+- `3ee270e` — docs: README.md and CLAUDE.md
+- `e5e2de3` — Experiment with literal `{{user}}`/`{{char}}` macros (reverted)
+- `b4d5eeb` — Save formatted message to ST chat history
+- `24337fe` — Use actual QQ name + char name (not template macros)
+- `761ef01` — QQ号 as user ID + bidirectional nickname mapping
