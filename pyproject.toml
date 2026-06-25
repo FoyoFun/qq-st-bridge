@@ -1,0 +1,10 @@
+[project]
+name = "nb-qq-bot"
+description = "QQ机器人 - NoneBot2 + OneBot V11"
+requires-python = ">=3.9"
+
+[tool.nonebot]
+adapters = [
+    { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" },
+]
+plugins_dir = ["src/plugins"]
