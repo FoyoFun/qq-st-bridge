@@ -3,8 +3,8 @@
 ## Overview
 
 A QQ bot built on NoneBot2 that bridges QQ group chat to SillyTavern AI characters.
-When a user @mentions the bot, the message is forwarded to SillyTavern's API, which proxies
-to the configured AI backend (DeepSeek). The AI's response is returned to the QQ group.
+When a user @mentions the bot, the message is forwarded to a SillyTavern server plugin,
+which builds the prompt, calls the AI backend (DeepSeek), and returns the response.
 
 ## Architecture & Data Flow
 
@@ -12,9 +12,10 @@ to the configured AI backend (DeepSeek). The AI's response is returned to the QQ
 QQ Group @bot "hello"
   → QQ Server → NapCat (QQ bot client)
     → OneBot V11 WebSocket → NoneBot2 (Python, this project)
-      → SillyTavern HTTP API (Node.js, D:\TempFiles\SillyTavern)
-        → AI Backend (DeepSeek API)
-      ← AI response
+      → ST Plugin /api/plugins/nb-qq-bot/generate
+        → ST internally: load char + preset → build prompt → call AI
+        ← AI response
+      ← ST Plugin
     ← OneBot V11 WebSocket
   ← QQ Group: AI reply
 ```
@@ -24,9 +25,16 @@ QQ Group @bot "hello"
 | File | Purpose |
 |------|---------|
 | `bot.py` | Entry point. Inits NoneBot, registers OneBot V11 adapter, loads plugins |
-| `src/plugins/st_bridge.py` | **Core plugin (~700 lines)** — the entire SillyTavern bridge logic |
-| `.env` | Bot + ST bridge configuration (host, port, model, timeout, etc.) |
+| `src/plugins/st_bridge.py` | **Core plugin (~650 lines)** — the SillyTavern bridge logic |
+| `.env` | Bot + ST bridge configuration (host, port, timeout, etc.) |
 | `pyproject.toml` | Python project metadata, NoneBot adapter config |
+
+### ST Server Plugin
+
+| File | Purpose |
+|------|---------|
+| `..\SillyTavern\plugins\nb-qq-bot\index.js` | Plugin entry — registers `POST /api/plugins/nb-qq-bot/generate` |
+| `..\SillyTavern\plugins\nb-qq-bot\prompt-builder.js` | Prompt construction — builds OpenAI-format messages from character + preset + history |
 
 ## st_bridge.py — Plugin Structure
 
@@ -38,18 +46,17 @@ The plugin is organized into these sections:
 4. **StClient** — `httpx.AsyncClient` wrapper for SillyTavern API:
    - CSRF token management (fetch fresh token before each POST)
    - `st_get_characters()`, `st_get_presets()`, `st_get_character(avatar_url)`
-   - `st_load_chat()`, `st_save_chat()`, `st_generate()`
-5. **PromptBuilder** — `build_messages()` constructs the OpenAI-format messages array
-6. **Chat History** — Read/write SillyTavern's JSONL chat files via ST API
-7. **Command handlers** — `/chars`, `/presets`, `/char`, `/preset`, `/status`, `/newchat`, `/clear`, `/help`
-8. **Message handler** — `on_message(rule=to_me() & is_type(GroupMessageEvent))`
+   - `st_load_chat()`, `st_save_chat()`, `st_plugin_generate()` ← calls ST plugin for prompt building + AI generation
+5. **Chat History** — Read/write SillyTavern's JSONL chat files via ST API
+6. **Command handlers** — `/chars`, `/presets`, `/char`, `/preset`, `/status`, `/newchat`, `/clear`, `/help`
+7. **Message handler** — `on_message(rule=to_me() & is_type(GroupMessageEvent))`
 
 ### Message Flow (detailed)
 
 1. QQ group message with @mention arrives via OneBot WebSocket
 2. NoneBot2 auto-strips the @mention, sets `event.to_me = True`
 3. Handler checks: if empty → help; if `/cmd` → route to command; else → chat
-4. Chat flow: load ST chat history → build messages array → call `/api/backends/chat-completions/generate` → save back to ST → reply to QQ
+4. Chat flow: load ST chat history → `st_plugin_generate()` → ST plugin loads character + preset, builds full prompt, calls AI → save back to ST → reply to QQ
 
 ### User message format
 
@@ -76,7 +83,7 @@ Example: `2254425209对Seraphina说，你好`
 | `/api/settings/get` | POST | List presets (openai_setting_names + contents) |
 | `/api/chats/get` | POST | Load chat history (JSONL) |
 | `/api/chats/save` | POST | Save chat history |
-| `/api/backends/chat-completions/generate` | POST | Generate AI response (OpenAI-format proxy) |
+| `/api/plugins/nb-qq-bot/generate` | POST | **Main call** — build prompt + generate AI response in one request |
 
 ### SillyTavern CSRF flow
 
@@ -88,13 +95,13 @@ ST uses `csrf-sync` which ties CSRF tokens to session cookies. The `httpx.AsyncC
 ## External Services
 
 ### SillyTavern
-- **Path**: `D:\TempFiles\SillyTavern`
+- **Path**: `C:\TempProgram\SillyTavern`
 - **Start**: `node server.js` (port 8000)
 - **Stop**: Ctrl+C or kill the node process
-- **Config**: `D:\TempFiles\SillyTavern\config.yaml` (whitelist includes 127.0.0.1)
+- **Config**: `C:\TempProgram\SillyTavern\config.yaml` (whitelist includes 127.0.0.1)
 
 ### NapCat (QQ Bot)
-- **Path**: `D:\TempFiles\NapCatShellOneKey\bootmain`
+- **Path**: `C:\TempProgram\NapCatShellOneKey\bootmain`
 - **Start**: `NapCatWinBootMain.exe` (GUI app, launches QQ login window)
 - **WebUI**: `http://127.0.0.1:6099/webui` (token: `665fc923821e`)
 - **Config**: `.../napcat/config/onebot11_3524611244.json` (WS client → `ws://127.0.0.1:8080/onebot/v11/ws`)
@@ -104,12 +111,9 @@ ST uses `csrf-sync` which ties CSRF tokens to session cookies. The `httpx.AsyncC
 ### Start everything
 ```bash
 # 1. SillyTavern
-cd D:\TempFiles\SillyTavern && node server.js &
+cd C:\TempProgram\SillyTavern && node server.js &
 
-# 2. NapCat (Windows GUI — needs desktop access for QR scan)
-cmd.exe /c "start D:\TempFiles\NapCatShellOneKey\bootmain\NapCatWinBootMain.exe"
-
-# 3. Bot
+# 2. Bot
 cd D:\Projects\python\nb_qq_bot && python bot.py &
 ```
 
@@ -139,7 +143,9 @@ asyncio.run(test())
 
 2. **CSRF token**: Must be fresh for each POST. The session cookie is handled by httpx's cookie jar automatically.
 
-3. **Model names**: When `chat_completion_source` is `deepseek`, the model must be a valid DeepSeek model (`deepseek-chat`, `deepseek-v4-flash`, `deepseek-v4-pro`). Using `gpt-4-turbo` with `deepseek` source causes 400 errors.
+3. **Model names**: Model is configured in the ST preset (not in `.env`). The `ST_MODEL` field is deprecated and should be left empty. Valid DeepSeek models: `deepseek-v4-flash`, `deepseek-v4-pro`.
+
+4. **ST plugins must be enabled**: `config.yaml` needs `enableServerPlugins: true` for the nb-qq-bot plugin to load.
 
 4. **NapCat is a GUI app**: Cannot run from Git Bash directly. Must use `cmd.exe /c start` to launch. The QQ login window appears on the Windows desktop.
 
@@ -148,6 +154,24 @@ asyncio.run(test())
 6. **Chat history format**: ST uses JSONL (one JSON per line). First line = header with `chat_metadata`. Subsequent lines = messages with `is_user`, `mes`, `send_date`, `name`.
 
 7. **Character avatar_url**: The `avatar` field from `/api/characters/all` is used as the `avatar_url` parameter for all other character/chat API calls.
+
+## SillyTavern Plugin (nb-qq-bot)
+
+Located at `C:\TempProgram\SillyTavern\plugins\nb-qq-bot\`. This is a server-side ST plugin that exposes:
+
+- `POST /api/plugins/nb-qq-bot/generate` — one-shot prompt building + AI generation
+
+The plugin is **independent of ST source code** (no imports from `src/`). It uses its own
+prompt builder that constructs system prompts from character cards, preset templates, and chat history.
+The `plugins/` directory is in ST's `.gitignore`, so this plugin is unaffected by upstream ST updates.
+
+**Plugin internals**:
+1. Receives `avatar_url`, `preset_name`, `chat_history`, `user_message`
+2. Fetches character card via ST's own `/api/characters/get`
+3. Fetches preset/settings via ST's own `/api/settings/get`
+4. Builds messages array (system prompt + history + user message)
+5. Calls ST's own `/api/backends/chat-completions/generate`
+6. Returns the AI response
 
 ## Version History
 
@@ -158,3 +182,4 @@ asyncio.run(test())
 - `b4d5eeb` — Save formatted message to ST chat history
 - `24337fe` — Use actual QQ name + char name (not template macros)
 - `761ef01` — QQ号 as user ID + bidirectional nickname mapping
+- current — Moved prompt building to ST server plugin, removed `build_messages()`/`st_generate()`

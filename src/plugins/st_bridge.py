@@ -192,58 +192,45 @@ async def st_save_chat(avatar_url: str, file_name: str, chat: list[dict]) -> boo
     except Exception:
         return False
 
-async def st_generate(messages: list[dict], preset: dict) -> str:
-    """Send messages to ST for AI completion. Returns response text."""
+async def st_plugin_generate(
+    avatar_url: str,
+    preset_name: str,
+    chat_history: list[dict],
+    user_message: str,
+    user_name: str = "QQ用户",
+    character_name: str = "",
+) -> dict:
+    """Call the nb-qq-bot ST plugin to build prompt and generate response.
+
+    Returns: {"success": bool, "response_text": str, "error": str (if failed)}
+    """
     client = await _get_client()
     token = await _csrf_token(client)
 
     payload: dict = {
-        "messages": messages,
-        "chat_completion_source": preset.get("chat_completion_source", ST_CHAT_SOURCE),
+        "avatar_url": avatar_url,
+        "preset_name": preset_name,
+        "chat_history": chat_history,
+        "user_message": user_message,
+        "user_name": user_name,
+        "qq_chat_behavior": _QQ_CHAT_BEHAVIOR.format(
+            character_name=character_name or "角色"
+        ),
+        "max_response_length": ST_MAX_RESPONSE_LENGTH,
+        "chat_completion_source": ST_CHAT_SOURCE,
         "stream": False,
     }
-
-    # Apply preset parameters — model selection
-    # ST uses different model fields per source (openai_model, claude_model, etc.)
-    source = preset.get("chat_completion_source", ST_CHAT_SOURCE)
-    model = ST_MODEL or preset.get("openai_model", "") or preset.get("model", "")
-    # For DeepSeek source, if the model is not a DeepSeek model, fall back
-    if source == "deepseek" and model and "deepseek" not in model.lower():
-        model = ""  # let ST use its default
-    if not model:
-        # Default fallbacks per source
-        defaults = {"deepseek": "deepseek-chat", "openai": "gpt-4o-mini"}
-        model = defaults.get(source, "")
-    if model:
-        payload["model"] = model
-
-    for key in ("temperature", "frequency_penalty", "presence_penalty",
-                "top_p", "top_k", "top_a", "min_p", "repetition_penalty",
-                "thinking"):
-        if key in preset:
-            payload[key] = preset[key]
-
-    tokens = preset.get("openai_max_tokens") or preset.get("max_tokens") or 500
-    payload["max_tokens"] = tokens
+    # Don't send model — let ST use the preset's configured model
 
     resp = await client.post(
-        f"{_base()}/api/backends/chat-completions/generate",
+        f"{_base()}/api/plugins/nb-qq-bot/generate",
         json=payload,
         headers={"X-CSRF-Token": token},
     )
     resp.raise_for_status()
-    data = resp.json()
-
-    # Extract response content (OpenAI / DeepSeek format)
-    if "choices" in data and data["choices"]:
-        msg = data["choices"][0].get("message", {})
-        return str(msg.get("content", "") or "")
-    return ""
+    return resp.json()
 
 # ---------------------------------------------------------------------------
-# Prompt Builder
-# ---------------------------------------------------------------------------
-
 # QQ 群聊行为指令（置于 system prompt 最前面）
 _QQ_CHAT_BEHAVIOR = """\
 你是{character_name}，正在QQ群聊中发言。你的每一条回复都是一条真实的QQ聊天消息。
@@ -275,78 +262,6 @@ _QQ_CHAT_BEHAVIOR = """\
 - 自然地使用{character_name}的口头禅和说话习惯
 - 先想「如果我是{character_name}，听到这句话会怎么回」，再写出来"""
 
-
-def build_messages(character: dict, history: list[dict], user_text: str) -> list[dict]:
-    """Build the messages array for the AI backend from character card + history."""
-
-    char_data = character.get("data", character)
-    char_name = character.get("name", "") or char_data.get("name", "")
-    system_parts: list[str] = []
-
-    # 0. QQ 群聊行为指令（始终在最前面）
-    if char_name:
-        system_parts.append(_QQ_CHAT_BEHAVIOR.format(character_name=char_name))
-
-    # Helper: normalize line endings
-    def _clean(s: str) -> str:
-        return s.replace("\r\n", "\n").replace("\r", "\n").strip()
-
-    # 1. Character system_prompt (falls through to field-built if empty/whitespace)
-    sys_prompt = _clean(char_data.get("system_prompt", ""))
-    if sys_prompt:
-        system_parts.append(sys_prompt)
-    else:
-        # 2. Default system prompt from character fields
-        desc = _clean(char_data.get("description", "") or character.get("description", ""))
-        if desc:
-            system_parts.append(f"[Character: {char_name}]\n{desc}")
-
-        personality = _clean(char_data.get("personality", "") or character.get("personality", ""))
-        if personality:
-            system_parts.append(f"[Personality]\n{personality}")
-
-        scenario = _clean(char_data.get("scenario", "") or character.get("scenario", ""))
-        if scenario:
-            system_parts.append(f"[Scenario]\n{scenario}")
-
-    # 3. Post-history instructions (added after history, as a system message)
-    post_history = _clean(char_data.get("post_history_instructions", ""))
-
-    # 4. Dialogue examples (mes_example) — 替换 {{char}}/{{user}} 占位符
-    mes_example = _clean(char_data.get("mes_example", "") or character.get("mes_example", ""))
-    if mes_example:
-        # 替换占位符为实际名称
-        mes_example = mes_example.replace("{{char}}", char_name)
-        mes_example = mes_example.replace("{{user}}", "用户")
-        system_parts.append(
-            "[Example dialogue — use this tone/style:\n"
-            f"{mes_example}\n"
-            "]"
-        )
-
-    # Build system message
-    system_content = "\n\n".join(system_parts) if system_parts else (
-        f"You are {char_name or 'an AI assistant'}. "
-        "Be helpful, engaging, and stay in character."
-    )
-
-    messages: list[dict] = [{"role": "system", "content": system_content}]
-
-    # Add chat history (user/assistant pairs)
-    for msg in history:
-        role = "assistant" if not msg.get("is_user") else "user"
-        content = msg.get("mes", "")
-        if content:
-            messages.append({"role": role, "content": content})
-
-    # Add post-history instructions as a system message before the current user message
-    if post_history:
-        messages.append({"role": "system", "content": post_history})
-
-    # Add current user message
-    messages.append({"role": "user", "content": user_text})
-
-    return messages
 
 # ---------------------------------------------------------------------------
 # Chat History Helpers
@@ -687,37 +602,27 @@ async def handle_at_me(event: GroupMessageEvent, text: str = EventPlainText()):
         header = _make_chat_header(user_name, state.character_name)
         chat_data = [header]
 
-    # --- Build messages for AI ---
-    try:
-        preset_data = (await st_get_presets()).get(state.preset_name, {})
-        char_data = await st_get_character(state.avatar_url)
-    except httpx.ConnectError:
-        await at_me.finish("无法连接 SillyTavern，请确认 ST 已启动。")
-        return
-    except Exception as e:
-        await at_me.finish(f"获取角色/预设数据失败: {e}")
-        return
-
-    if not char_data:
-        await at_me.finish("无法获取角色数据，请检查 SillyTavern 连接。")
-        return
-
+    # --- Build prompt + Generate response via ST plugin ---
     history = _extract_history(chat_data)
     # Format user message: "QQ号对char说，msg"
     formatted_text = f"{user_id}对{state.character_name}说，{text}"
-    messages = build_messages(char_data, history, formatted_text)
 
-    # --- Generate response ---
     try:
-        response_text = await st_generate(messages, preset_data)
-    except httpx.TimeoutException:
-        await at_me.finish("AI 响应超时，请稍后重试。")
-        return
+        result = await st_plugin_generate(
+            avatar_url=state.avatar_url,
+            preset_name=state.preset_name,
+            chat_history=history,
+            user_message=formatted_text,
+            user_name=user_name,
+            character_name=state.character_name or "",
+        )
     except httpx.ConnectError:
         await at_me.finish("无法连接 SillyTavern，请确认 ST 已启动。")
         return
+    except httpx.TimeoutException:
+        await at_me.finish("AI 响应超时，请稍后重试。")
+        return
     except httpx.HTTPStatusError as e:
-        # Try to get error detail from SillyTavern
         detail = ""
         try:
             err_body = e.response.json()
@@ -735,10 +640,16 @@ async def handle_at_me(event: GroupMessageEvent, text: str = EventPlainText()):
         await at_me.finish(msg)
         return
     except Exception as e:
-        logging.exception("Generate error")
+        logging.exception("Plugin generate error")
         await at_me.finish(f"生成回复时出错: {type(e).__name__}")
         return
 
+    if not result.get("success"):
+        error_msg = result.get("error", "未知错误")
+        await at_me.finish(f"AI 服务返回错误: {error_msg}")
+        return
+
+    response_text = result.get("response_text", "")
     if not response_text or not response_text.strip():
         await at_me.finish("(AI 返回了空响应，请尝试重新发送。)")
         return
