@@ -13,6 +13,9 @@ venv/
 .vscode/
 .idea/
 
+# Data (runtime persisted state)
+data/
+
 # OS
 .DS_Store
 Thumbs.db

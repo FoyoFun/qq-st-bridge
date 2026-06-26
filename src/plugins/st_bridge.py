@@ -17,6 +17,7 @@ Commands:
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -60,6 +61,54 @@ def _get_state(group_id: int) -> GroupState:
     if group_id not in _group_states:
         _group_states[group_id] = GroupState()
     return _group_states[group_id]
+
+# ---------------------------------------------------------------------------
+# State persistence (survives bot restarts)
+# ---------------------------------------------------------------------------
+
+def _state_file() -> str:
+    """Path to the JSON file that persists group states."""
+    return os.path.join(os.path.dirname(__file__), "..", "..", "data", "group_states.json")
+
+def _save_states() -> None:
+    """Persist all group states to disk."""
+    data: dict[str, dict] = {}
+    for gid, state in _group_states.items():
+        data[str(gid)] = {
+            "character_name": state.character_name,
+            "preset_name": state.preset_name,
+            "avatar_url": state.avatar_url,
+            "chat_file": state.chat_file,
+        }
+    try:
+        filepath = _state_file()
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.warning(f"Failed to save group states: {e}")
+
+def _load_states() -> None:
+    """Restore group states from disk (called at startup)."""
+    global _group_states
+    try:
+        filepath = _state_file()
+        if not os.path.exists(filepath):
+            return
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for gid_str, fields in data.items():
+            gid = int(gid_str)
+            state = GroupState()
+            state.character_name = fields.get("character_name")
+            state.preset_name = fields.get("preset_name")
+            state.avatar_url = fields.get("avatar_url")
+            state.chat_file = fields.get("chat_file")
+            _group_states[gid] = state
+        logging.info(f"Loaded {len(data)} group state(s) from disk")
+    except Exception as e:
+        logging.warning(f"Failed to load group states: {e}")
+        _group_states = {}
 
 # ---------------------------------------------------------------------------
 # QQ号 → 昵称 映射（用于回复中还原QQ号为昵称）
@@ -393,6 +442,8 @@ async def cmd_char_select(group_id: int, args: str) -> str:
 
     state.character_name = match.get("name", name)
     state.avatar_url = match.get("avatar", "")
+    state.chat_file = None  # reset chat when switching character
+    _save_states()
 
     # Get first_mes for greeting
     first_mes = match.get("first_mes", "")
@@ -430,6 +481,7 @@ async def cmd_preset_select(group_id: int, args: str) -> str:
         return f"未找到预设「{name}」。使用 /presets 查看可用预设列表。"
 
     state.preset_name = match
+    _save_states()
     pdata = presets[match]
     return (
         f"已选择预设: {match}\n"
@@ -458,6 +510,7 @@ async def cmd_newchat(group_id: int, user_name: str = "QQ用户") -> str:
 
     # Create a new chat
     state.chat_file = _new_chat_filename(state.character_name)
+    _save_states()
 
     # Save the initial empty chat with header
     header = _make_chat_header(user_name, state.character_name)
@@ -486,6 +539,7 @@ async def cmd_clear(group_id: int) -> str:
     """Clear conversation history for this group."""
     state = _get_state(group_id)
     state.chat_file = None
+    _save_states()
     return "对话历史已清除。下次 @我 时将开始新对话。"
 
 # ---------------------------------------------------------------------------
@@ -599,6 +653,7 @@ async def handle_at_me(event: GroupMessageEvent, text: str = EventPlainText()):
     else:
         # Start a new chat
         state.chat_file = _new_chat_filename(state.character_name)
+        _save_states()
         header = _make_chat_header(user_name, state.character_name)
         chat_data = [header]
 
@@ -679,9 +734,11 @@ driver = get_driver()
 
 @driver.on_startup
 async def _on_startup():
-    """Load config and pre-fetch caches."""
+    """Load config, restore persisted state, and pre-fetch caches."""
     global ST_BASE_URL, ST_CHAT_SOURCE, ST_MODEL, ST_TIMEOUT
     global ST_MAX_RESPONSE_LENGTH, ST_DEFAULT_PRESET, ST_DEFAULT_CHARACTER
+
+    _load_states()
 
     config = driver.config
 
