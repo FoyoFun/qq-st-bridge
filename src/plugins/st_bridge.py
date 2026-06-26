@@ -285,7 +285,7 @@ _QQ_CHAT_BEHAVIOR = """\
 你是{character_name}，正在QQ群聊中发言。你的每一条回复都是一条真实的QQ聊天消息。
 
 【输入格式】
-你收到的消息格式为："[QQ号]对{character_name}说：[内容]" —— 有人直接对你说话。
+你收到的消息格式为："[QQ号]：[内容]" —— 每条消息开头用QQ号标识说话人。
 
 【核心规则】
 1. 纯文本输出：你的回复只能是纯口语文字。禁止一切描写——
@@ -294,8 +294,8 @@ _QQ_CHAT_BEHAVIOR = """\
 2. 不跳话题：顺着当前话题聊，不要突然拐到无关的事情上。
 3. 灵活回应：你可以直接回复对你说话的人，也可以就话题发表自己的看法，
    不一定每次都要对着某个人说话。
-4. 分辨人称：消息中「[QQ号]对{character_name}说」的人是当前对话对象；
-   消息中提到的其他人是第三人。回复时用昵称指代，该提谁就提谁。
+4. 分辨人称：消息中「[QQ号]：」标识了说话人——这是当前对话对象。
+   回复时用昵称指代，该提谁就提谁。
 
 【情绪通过文字表达】
 你必须深入代入{character_name}的性格，想清楚角色会怎么反应，再输出回复。
@@ -659,8 +659,7 @@ async def handle_at_me(event: GroupMessageEvent, text: str = EventPlainText()):
 
     # --- Build prompt + Generate response via ST plugin ---
     history = _extract_history(chat_data)
-    # Format user message: "QQ号对char说，msg"
-    formatted_text = f"{user_id}对{state.character_name}说，{text}"
+    formatted_text = f"{user_id}：{text}"
 
     try:
         result = await st_plugin_generate(

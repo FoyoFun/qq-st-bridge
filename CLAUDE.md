@@ -61,11 +61,11 @@ The plugin is organized into these sections:
 
 ### User message format
 
-Messages are formatted before sending to AI using QQ numbers (to avoid weird group nicknames confusing the AI):
+Messages are formatted before sending to AI using QQ numbers as stable identifiers:
 ```
-{QQ号}对{character_name}说，{original_text}
+{QQ号}：{original_text}
 ```
-Example: `2254425209对Seraphina说，你好`
+Example: `2254425209：你好`
 
 ### QQ号 → 昵称 双向映射
 
@@ -96,23 +96,17 @@ ST uses `csrf-sync` which ties CSRF tokens to session cookies. The `httpx.AsyncC
 ## External Services
 
 ### SillyTavern
-- **Path**: `C:\TempProgram\SillyTavern`
+- **Path**: `D:\TempFiles\SillyTavern`
 - **Start**: `node server.js` (port 8000)
 - **Stop**: Ctrl+C or kill the node process
-- **Config**: `C:\TempProgram\SillyTavern\config.yaml` (whitelist includes 127.0.0.1)
-
-### NapCat (QQ Bot)
-- **Path**: `C:\TempProgram\NapCatShellOneKey\bootmain`
-- **Start**: `NapCatWinBootMain.exe` (GUI app, launches QQ login window)
-- **WebUI**: `http://127.0.0.1:6099/webui` (token: `665fc923821e`)
-- **Config**: `.../napcat/config/onebot11_3524611244.json` (WS client → `ws://127.0.0.1:8080/onebot/v11/ws`)
+- **Config**: `D:\TempFiles\SillyTavern\config.yaml` (whitelist includes 127.0.0.1)
 
 ## Common Operations
 
 ### Start everything
 ```bash
 # 1. SillyTavern
-cd C:\TempProgram\SillyTavern && node server.js &
+cd D:\TempFiles\SillyTavern && node server.js &
 
 # 2. Bot
 cd D:\Projects\python\nb_qq_bot && python bot.py &
@@ -158,7 +152,7 @@ asyncio.run(test())
 
 ## SillyTavern Plugin (nb-qq-bot)
 
-Located at `C:\TempProgram\SillyTavern\plugins\nb-qq-bot\`. This is a server-side ST plugin that exposes:
+Located at `D:\TempFiles\SillyTavern\plugins\nb-qq-bot\`. This is a server-side ST plugin that exposes:
 
 - `POST /api/plugins/nb-qq-bot/generate` — one-shot prompt building + AI generation
 
@@ -170,9 +164,14 @@ The `plugins/` directory is in ST's `.gitignore`, so this plugin is unaffected b
 1. Receives `avatar_url`, `preset_name`, `chat_history`, `user_message`
 2. Fetches character card via ST's own `/api/characters/get`
 3. Fetches preset/settings via ST's own `/api/settings/get`
-4. Builds messages array (system prompt + history + user message)
-5. Calls ST's own `/api/backends/chat-completions/generate`
-6. Returns the AI response
+4. Resolves model from ST's connection settings (`data/default-user/OpenAI Settings/*.json` → `{source}_model`)
+5. Builds messages array (system prompt + history + user message)
+6. Calls ST's own `/api/backends/chat-completions/generate`
+7. Returns the AI response
+
+**Model resolution**: The plugin no longer reads model from the preset (`preset.openai_model`).
+Instead, it reads ST's connection profile files to find `{source}_model` (e.g. `deepseek_model`),
+so the model follows whatever is configured in SillyTavern's connection settings.
 
 ## Version History
 
@@ -185,3 +184,5 @@ The `plugins/` directory is in ST's `.gitignore`, so this plugin is unaffected b
 - `761ef01` — QQ号 as user ID + bidirectional nickname mapping
 - current — Moved prompt building to ST server plugin, removed `build_messages()`/`st_generate()`
 - current — Added group state persistence (`data/group_states.json`), survives bot restarts
+- current — Simplified user message format: `{QQ号}：{msg}` (was `{QQ号}对{char}说，{msg}`)
+- current — Model resolution: read from ST connection settings instead of preset
