@@ -27,6 +27,7 @@ QQ Group @bot "hello"
 | `bot.py` | Entry point. Inits NoneBot, registers OneBot V11 adapter, loads plugins |
 | `src/plugins/st_bridge.py` | **Core plugin (~650 lines)** — the SillyTavern bridge logic |
 | `.env` | Bot + ST bridge configuration (host, port, timeout, etc.) |
+| `data/group_states.json` | Persisted group state — character, preset, chat per group (survives restarts) |
 | `pyproject.toml` | Python project metadata, NoneBot adapter config |
 
 ### ST Server Plugin
@@ -41,7 +42,7 @@ QQ Group @bot "hello"
 The plugin is organized into these sections:
 
 1. **Config** — Global variables loaded from `.env` via `driver.config` at startup
-2. **GroupState** — Per-group dataclass: `character_name`, `preset_name`, `avatar_url`, `chat_file`
+2. **GroupState** — Per-group dataclass: `character_name`, `preset_name`, `avatar_url`, `chat_file`. Persisted to `data/group_states.json` on every change; auto-restored on startup via `_load_states()` / `_save_states()`.
 3. **NicknameMap** — `_nickname_map` (QQ号→昵称) and `_replace_qq_with_nickname()` for reply conversion
 4. **StClient** — `httpx.AsyncClient` wrapper for SillyTavern API:
    - CSRF token management (fetch fresh token before each POST)
@@ -183,3 +184,4 @@ The `plugins/` directory is in ST's `.gitignore`, so this plugin is unaffected b
 - `24337fe` — Use actual QQ name + char name (not template macros)
 - `761ef01` — QQ号 as user ID + bidirectional nickname mapping
 - current — Moved prompt building to ST server plugin, removed `build_messages()`/`st_generate()`
+- current — Added group state persistence (`data/group_states.json`), survives bot restarts
