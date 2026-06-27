@@ -23,5 +23,3 @@ Thumbs.db
 # Local debug / scratch files
 *.txt
 
-# ST plugin mirror (local copy of SillyTavern plugin)
-st/
