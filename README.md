@@ -19,7 +19,7 @@ Prompt 构建由 ST 服务端插件（`plugins/nb-qq-bot/`）负责，复用 ST 
 nb_qq_bot/
 ├── bot.py                  # NoneBot2 入口，注册 OneBot V11 适配器
 ├── pyproject.toml          # 项目元数据 & NoneBot2 配置
-├── .env                    # 机器人和 ST Bridge 配置
+├── .env.example            # 配置模板（复制为 .env 后填写）
 ├── README.md               # 项目说明
 ├── CLAUDE.md               # Claude Code 项目上下文
 ├── src/
@@ -78,24 +78,15 @@ python3 bot.py
 > **消息格式**：发给 AI 时会用 QQ 号代替昵称（`123456789对Seraphina说，你好`），
 > 避免奇怪群名污染 AI 理解。AI 回复中的 QQ 号会自动换回昵称再发到群聊。
 
-## 配置 (.env)
+## 配置
 
-```env
-HOST=127.0.0.1
-PORT=8080
+将 `.env.example` 复制为 `.env` 后按需修改：
 
-# SillyTavern Bridge
-ST_BASE_URL=http://127.0.0.1:8000
-ST_CHAT_SOURCE=deepseek
-ST_TIMEOUT=120
-ST_MAX_RESPONSE_LENGTH=800
-ST_DEFAULT_CHARACTER=
-ST_DEFAULT_PRESET=
-
-# ST_MODEL 已废弃 — 模型由 ST 预设配置，不要在此设置
-# 请勿在等号后面写注释，会被当值读取
-ST_MODEL=
+```bash
+cp .env.example .env
 ```
+
+各配置项说明见 `.env.example` 中的注释。
 
 ## 关键变更
 
