@@ -34,8 +34,8 @@ QQ Group @bot "hello"
 
 | File | Purpose |
 |------|---------|
-| `..\SillyTavern\plugins\nb-qq-bot\index.js` | Plugin entry — registers `POST /api/plugins/nb-qq-bot/generate` |
-| `..\SillyTavern\plugins\nb-qq-bot\prompt-builder.js` | Prompt construction — builds OpenAI-format messages from character + preset + history |
+| `SillyTavern/plugins/nb-qq-bot/index.js` | Plugin entry — registers `POST /api/plugins/nb-qq-bot/generate` |
+| `SillyTavern/plugins/nb-qq-bot/prompt-builder.js` | Prompt construction — builds OpenAI-format messages from character + preset + history |
 
 ## st_bridge.py — Plugin Structure
 
@@ -65,7 +65,7 @@ Messages are formatted before sending to AI using QQ numbers as stable identifie
 ```
 {QQ号}：{original_text}
 ```
-Example: `2254425209：你好`
+Example: `123456789：你好`
 
 ### QQ号 → 昵称 双向映射
 
@@ -96,26 +96,26 @@ ST uses `csrf-sync` which ties CSRF tokens to session cookies. The `httpx.AsyncC
 ## External Services
 
 ### SillyTavern
-- **Path**: `D:\TempFiles\SillyTavern`
+- **Path**: `<SillyTavern-path>`
 - **Start**: `node server.js` (port 8000)
 - **Stop**: Ctrl+C or kill the node process
-- **Config**: `D:\TempFiles\SillyTavern\config.yaml` (whitelist includes 127.0.0.1)
+- **Config**: `<SillyTavern-path>/config.yaml` (whitelist includes 127.0.0.1)
 
 ## Common Operations
 
 ### Start everything
 ```bash
 # 1. SillyTavern
-cd D:\TempFiles\SillyTavern && node server.js &
+cd <SillyTavern-path> && node server.js &
 
 # 2. Bot
-cd D:\Projects\python\nb_qq_bot && python bot.py &
+cd <project-path> && python bot.py &
 ```
 
 ### Restart bot after code changes
 ```bash
 # Stop the background task, then restart
-cd D:\Projects\python\nb_qq_bot && python bot.py &
+cd <project-path> && python bot.py &
 ```
 
 ### Run tests
@@ -152,7 +152,7 @@ asyncio.run(test())
 
 ## SillyTavern Plugin (nb-qq-bot)
 
-Located at `D:\TempFiles\SillyTavern\plugins\nb-qq-bot\`. This is a server-side ST plugin that exposes:
+Located at `<SillyTavern-path>/plugins/nb-qq-bot/`. This is a server-side ST plugin that exposes:
 
 - `POST /api/plugins/nb-qq-bot/generate` — one-shot prompt building + AI generation
 

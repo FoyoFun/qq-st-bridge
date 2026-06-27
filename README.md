@@ -37,14 +37,14 @@ SillyTavern/                # ST 根目录（独立仓库）
 
 | 服务 | 路径 | 端口 | 说明 |
 |------|------|------|------|
-| **SillyTavern** | `C:\TempProgram\SillyTavern` | `8000` | AI 角色聊天前端，含 nb-qq-bot 插件 |
-| **NapCat** | `C:\TempProgram\NapCatShellOneKey` | `6099` (WebUI) | QQ 机器人框架，OneBot V11 协议 |
+| **SillyTavern** | `path/to/SillyTavern` | `8000` | AI 角色聊天前端，含 nb-qq-bot 插件 |
+| **NapCat** | `path/to/NapCat` | `6099` (WebUI) | QQ 机器人框架，OneBot V11 协议 |
 
 ## 快速启动
 
 ### 1. 启动 SillyTavern
 ```bash
-cd C:\TempProgram\SillyTavern
+cd path/to/SillyTavern
 node server.js
 # → http://127.0.0.1:8000
 # ST 启动时自动加载 plugins/nb-qq-bot/ 插件
@@ -53,14 +53,14 @@ node server.js
 
 ### 2. 启动 NapCat（QQ 机器人）
 ```bash
-cd C:\TempProgram\NapCatShellOneKey\bootmain
+cd path/to/NapCat/bootmain
 .\NapCatWinBootMain.exe
 # 扫码登录 QQ，自动连接 ws://127.0.0.1:8080/onebot/v11/ws
 ```
 
 ### 3. 启动 nb_qq_bot
 ```bash
-cd C:\TempProgram\nb_qq_bot
+cd path/to/nb_qq_bot
 python3 bot.py
 # → http://127.0.0.1:8080
 ```
@@ -75,7 +75,7 @@ python3 bot.py
 @bot <消息>     # 与 AI 对话
 ```
 
-> **消息格式**：发给 AI 时会用 QQ 号代替昵称（`2254425209对Seraphina说，你好`），
+> **消息格式**：发给 AI 时会用 QQ 号代替昵称（`123456789对Seraphina说，你好`），
 > 避免奇怪群名污染 AI 理解。AI 回复中的 QQ 号会自动换回昵称再发到群聊。
 
 ## 配置 (.env)
