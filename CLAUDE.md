@@ -10,8 +10,7 @@ which builds the prompt, calls the AI backend (DeepSeek), and returns the respon
 
 ```
 QQ Group @bot "hello"
-  → QQ Server → NapCat (QQ bot client)
-    → OneBot V11 WebSocket → NoneBot2 (Python, this project)
+  → OneBot V11 WebSocket → NoneBot2 (Python, this project)
       → ST Plugin /api/plugins/nb-qq-bot/generate
         → ST internally: load char + preset → build prompt → call AI
         ← AI response
@@ -95,12 +94,6 @@ ST uses `csrf-sync` which ties CSRF tokens to session cookies. The `httpx.AsyncC
 
 ## External Services
 
-### SillyTavern
-- **Path**: `<SillyTavern-path>`
-- **Start**: `node server.js` (port 8000)
-- **Stop**: Ctrl+C or kill the node process
-- **Config**: `<SillyTavern-path>/config.yaml` (whitelist includes 127.0.0.1)
-
 ## Common Operations
 
 ### Start everything
@@ -141,8 +134,6 @@ asyncio.run(test())
 3. **Model names**: Model is configured in the ST preset (not in `.env`). The `ST_MODEL` field is deprecated and should be left empty. Valid DeepSeek models: `deepseek-v4-flash`, `deepseek-v4-pro`.
 
 4. **ST plugins must be enabled**: `config.yaml` needs `enableServerPlugins: true` for the nb-qq-bot plugin to load.
-
-4. **NapCat is a GUI app**: Cannot run from Git Bash directly. Must use `cmd.exe /c start` to launch. The QQ login window appears on the Windows desktop.
 
 5. **ST whitelist**: SillyTavern's default config only allows `127.0.0.1` and `::1`. If moving to remote, update `config.yaml` whitelist.
 

@@ -9,7 +9,7 @@
 QQ 群成员 @机器人 "你好"
   │
   ▼
-NapCat (QQ 客户端) ──WebSocket (OneBot V11)──▶ NoneBot2 (Python)
+NapCat (OneBot V11 客户端) ──WebSocket──▶ NoneBot2 (Python)
                                                    │
                                                    │ POST /api/plugins/nb-qq-bot/generate
                                                    ▼
@@ -51,7 +51,7 @@ qq-st-bridge/
 | 组件 | 说明 |
 |------|------|
 | **SillyTavern** | AI 角色聊天前端，需已部署并运行 |
-| **NapCat** | QQ 机器人客户端（OneBot V11 协议实现） |
+| **NapCat**（或其他 OneBot V11 客户端） | QQ 机器人客户端 |
 | **Python ≥ 3.9** | 运行 qq-st-bridge |
 | **Node.js ≥ 18** | 运行 SillyTavern（内置 fetch） |
 
@@ -87,7 +87,7 @@ cp .env.example .env
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `HOST` | 机器人监听地址 | `127.0.0.1` |
-| `PORT` | 机器人监听端口（需与 NapCat 配置一致） | `8080` |
+| `PORT` | 机器人监听端口 | `8080` |
 | `SUPERUSERS` | 管理员 QQ 号列表 | `[]` |
 | `NICKNAME` | 机器人昵称，群内 @ 时也可用此名 | `["bot"]` |
 | `ST_BASE_URL` | SillyTavern 服务地址 | `http://127.0.0.1:8000` |
@@ -103,13 +103,9 @@ cp .env.example .env
 pip install nonebot2 nonebot-adapter-onebot httpx
 ```
 
-### 4. 启动 NapCat
+### 4. 启动
 
-NapCat 是 QQ 机器人客户端，提供 OneBot V11 WebSocket 服务。
-
-启动 NapCat 后，确保其 WebSocket 配置的端口与 `.env` 中的 `PORT` 一致。
-
-### 5. 启动
+确保 SillyTavern 已运行，然后启动机器人：
 
 ```bash
 # 终端 1：先启动 SillyTavern
@@ -120,6 +116,8 @@ node server.js
 cd /path/to/qq-st-bridge
 python bot.py
 ```
+
+> **注意**：本项目依赖 NapCat 或其他 OneBot V11 客户端连接 QQ，需单独启动并配置好 WebSocket 地址。`PORT` 配置需与客户端的 WebSocket 端口一致。
 
 ## 使用方法
 
