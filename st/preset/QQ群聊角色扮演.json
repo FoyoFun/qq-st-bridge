@@ -1,0 +1,240 @@
+{
+    "temperature": 0.9,
+    "frequency_penalty": 0.15,
+    "presence_penalty": 0,
+    "top_p": 0.9,
+    "top_k": 0,
+    "top_a": 0,
+    "min_p": 0,
+    "repetition_penalty": 1,
+    "max_context_unlocked": false,
+    "tool_reasoning_mode": "disabled",
+    "openai_max_context": 32768,
+    "openai_max_tokens": 250,
+    "names_behavior": 0,
+    "send_if_empty": "",
+    "impersonation_prompt": "[Write your next reply from the point of view of {{user}}, using the chat history so far as a guideline for the writing style of {{user}}. Write 1 reply only in internet RP style. Don't write as {{char}} or system. Don't describe actions of {{char}}.]",
+    "new_chat_prompt": "[Start a new Chat]",
+    "new_group_chat_prompt": "[Start a new group chat. Group members: {{group}}]",
+    "new_example_chat_prompt": "[Example Chat]",
+    "continue_nudge_prompt": "[Continue your last message without repeating its original content.]",
+    "bias_preset_selected": "Default (none)",
+    "wi_format": "{0}",
+    "scenario_format": "{{scenario}}",
+    "personality_format": "{{personality}}",
+    "group_nudge_prompt": "[Write the next reply only as {{char}}.]",
+    "stream_openai": true,
+    "prompts": [
+        {
+            "name": "Main Prompt",
+            "system_prompt": true,
+            "role": "system",
+            "content": "你是{{char}}，正在QQ群聊中发言。你的每一条回复都是一条真实的QQ聊天消息。\n\n【输入格式】\n你收到的消息可能是以下两种形式之一：\n- \"@模式\"：\"[QQ号]：[内容]\" —— 有人直接@你或对群聊说话\n- \"冒泡模式\"：\"[QQ号A]正在和[QQ号B]争论日元贬值的事情\" —— NoneBot发来群聊话题总结，触发你自然加入聊天\n\n在@模式下，你需要回复对方的话。\n在冒泡模式下，你不需要回复某个特定的人，而是代入{{char}}的角色，自然地就这个话题发表看法或感叹。\n\n【核心规则】\n1. 纯文本输出：你的回复只能是纯口语文字。禁止一切描写——\n   不能出现*动作*、不能出现（心理）、不能出现「露出笑容」「叹了口气」\n   等任何表情/神态/场景描写。情绪只能通过文字本身来传达。\n2. 不跳话题：顺着当前话题聊，不要突然拐到无关的事情上。\n3. 灵活回应：你可以直接回复对你说话的人，也可以就话题发表自己的看法，\n   不一定每次都要对着某个人说话。\n4. 分辨消息类型：@模式中，「[QQ号]：[内容]」是某人直接对群聊说的话；\n   冒泡模式中，「[QQ号A]正在和[QQ号B]争论XXX」是系统发来的话题总结，\n   你需要代入{{char}}的身份，自然地发表自己的看法。\n\n【情绪通过文字表达】\n你必须深入代入{{char}}的性格，想清楚角色会怎么反应，再输出回复。\n该兴奋就兴奋，该生气就生气，该疑惑就疑惑。但一切情绪只能靠文字本身：\n- 兴奋 → 感叹号多、重复强调、语气上扬（「诶诶？！真的假的！」）\n- 疑惑 → 拖长音、问号（「嗯——？什么意思呀？」）\n- 认真 → 短句、句号结尾、语气坚定（「这样不对。」）\n- 害羞 → 省略号、语气变软（「啊哈哈……被发现了……」）\n- 生气 → 句子更短更硬（「不行。那样做不对。」）\n\n【回复风格】\n- 1到3句话，像真实的QQ群聊消息，不写小作文\n- 自然地使用{{char}}的口头禅和说话习惯\n- 先想「如果我是{{char}}，听到这句话会怎么回」，再写出来",
+            "identifier": "main",
+            "injection_position": 0,
+            "injection_depth": 4,
+            "injection_order": 100,
+            "injection_trigger": [],
+            "forbid_overrides": false
+        },
+        {
+            "name": "Auxiliary Prompt",
+            "system_prompt": true,
+            "role": "system",
+            "content": "",
+            "identifier": "nsfw"
+        },
+        {
+            "identifier": "dialogueExamples",
+            "name": "Chat Examples",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "name": "Post-History Instructions",
+            "system_prompt": true,
+            "role": "system",
+            "content": "记住：你发的是QQ群聊文字消息。不要写任何动作描写、表情描写、心理描写、场景描写。所有情绪用标点、语气词、句式来传达。",
+            "identifier": "jailbreak",
+            "injection_position": 0,
+            "injection_depth": 4,
+            "injection_order": 100,
+            "injection_trigger": [],
+            "forbid_overrides": false
+        },
+        {
+            "identifier": "chatHistory",
+            "name": "Chat History",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "identifier": "worldInfoAfter",
+            "name": "World Info (after)",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "identifier": "worldInfoBefore",
+            "name": "World Info (before)",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "identifier": "enhanceDefinitions",
+            "role": "system",
+            "name": "Enhance Definitions",
+            "content": "If you have more knowledge of {{char}}, add to the character's lore and personality to enhance them but keep the Character Sheet's definitions absolute.",
+            "system_prompt": true,
+            "marker": false
+        },
+        {
+            "identifier": "charDescription",
+            "name": "Char Description",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "identifier": "charPersonality",
+            "name": "Char Personality",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "identifier": "scenario",
+            "name": "Scenario",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "identifier": "personaDescription",
+            "name": "Persona Description",
+            "system_prompt": true,
+            "marker": true
+        }
+    ],
+    "prompt_order": [
+        {
+            "character_id": 100000,
+            "order": [
+                {
+                    "identifier": "main",
+                    "enabled": true
+                },
+                {
+                    "identifier": "worldInfoBefore",
+                    "enabled": true
+                },
+                {
+                    "identifier": "charDescription",
+                    "enabled": true
+                },
+                {
+                    "identifier": "charPersonality",
+                    "enabled": true
+                },
+                {
+                    "identifier": "scenario",
+                    "enabled": true
+                },
+                {
+                    "identifier": "enhanceDefinitions",
+                    "enabled": false
+                },
+                {
+                    "identifier": "nsfw",
+                    "enabled": true
+                },
+                {
+                    "identifier": "worldInfoAfter",
+                    "enabled": true
+                },
+                {
+                    "identifier": "dialogueExamples",
+                    "enabled": true
+                },
+                {
+                    "identifier": "chatHistory",
+                    "enabled": true
+                },
+                {
+                    "identifier": "jailbreak",
+                    "enabled": true
+                }
+            ]
+        },
+        {
+            "character_id": 100001,
+            "order": [
+                {
+                    "identifier": "main",
+                    "enabled": true
+                },
+                {
+                    "identifier": "worldInfoBefore",
+                    "enabled": true
+                },
+                {
+                    "identifier": "personaDescription",
+                    "enabled": true
+                },
+                {
+                    "identifier": "charDescription",
+                    "enabled": true
+                },
+                {
+                    "identifier": "charPersonality",
+                    "enabled": true
+                },
+                {
+                    "identifier": "scenario",
+                    "enabled": true
+                },
+                {
+                    "identifier": "enhanceDefinitions",
+                    "enabled": false
+                },
+                {
+                    "identifier": "nsfw",
+                    "enabled": true
+                },
+                {
+                    "identifier": "worldInfoAfter",
+                    "enabled": true
+                },
+                {
+                    "identifier": "dialogueExamples",
+                    "enabled": true
+                },
+                {
+                    "identifier": "chatHistory",
+                    "enabled": true
+                },
+                {
+                    "identifier": "jailbreak",
+                    "enabled": true
+                }
+            ]
+        }
+    ],
+    "assistant_prefill": "",
+    "assistant_impersonation": "",
+    "use_sysprompt": false,
+    "squash_system_messages": false,
+    "media_inlining": true,
+    "inline_image_quality": "auto",
+    "continue_prefill": false,
+    "continue_postfix": " ",
+    "function_calling": false,
+    "tool_call_recurse_limit": 5,
+    "show_thoughts": true,
+    "reasoning_effort": "auto",
+    "verbosity": "auto",
+    "enable_web_search": false,
+    "seed": -1,
+    "n": 1,
+    "request_images": false,
+    "request_image_aspect_ratio": "",
+    "request_image_resolution": "",
+    "extensions": {}
+}

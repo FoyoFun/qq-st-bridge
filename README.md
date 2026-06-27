@@ -40,6 +40,11 @@ qq-st-bridge/
 ├── src/plugins/
 │   └── st_bridge.py             # QQ ↔ ST 桥接核心逻辑
 │
+├── st/char/                     # 示例角色卡（可导入 ST 使用）
+│   └── 小宫果穗.json
+├── st/preset/                   # 示例预设（可导入 ST 使用）
+│   └── QQ群聊角色扮演.json
+│
 └── st/plugins/nb-qq-bot/        # SillyTavern 服务端插件
     ├── index.js                 #   插件入口 & HTTP 编排
     ├── prompt-builder.js        #   Prompt 构建器
@@ -54,6 +59,22 @@ qq-st-bridge/
 | **NapCat**（或其他 OneBot V11 客户端） | QQ 机器人客户端 |
 | **Python ≥ 3.9** | 运行 qq-st-bridge |
 | **Node.js ≥ 18** | 运行 SillyTavern（内置 fetch） |
+
+## 示例角色与预设
+
+`st/` 目录下提供了可直接导入 SillyTavern 使用的示例文件：
+
+| 文件 | 说明 |
+|------|------|
+| `st/char/小宫果穗.json` | 角色卡 — 元气小学生偶像，适合测试 QQ 群聊场景 |
+| `st/preset/QQ群聊角色扮演.json` | 预设 — 针对 QQ 群聊优化的角色扮演参数，回复简洁（250 token），符合聊天氛围 |
+
+将角色卡和预设文件分别导入到 SillyTavern 的 `data/default-user/` 对应目录即可使用。
+
+---
+
+> 本项目由 AI 生成。
+
 
 ## 安装与配置
 
