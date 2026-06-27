@@ -28,7 +28,7 @@ const { buildMessages } = require('./prompt-builder.js');
 const info = {
     id: 'nb-qq-bot',
     name: 'NB QQ Bot Bridge',
-    description: 'Unified prompt-building + generation endpoint for the nb_qq_bot NoneBot2 plugin.',
+    description: 'Unified prompt-building + generation endpoint for the qq-st-bridge NoneBot2 plugin.',
 };
 
 // ---------------------------------------------------------------------------

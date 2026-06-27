@@ -1,6 +1,6 @@
 # nb-qq-bot — SillyTavern Plugin
 
-ST 服务端插件，为 nb_qq_bot（NoneBot2 QQ 机器人）提供统一的 prompt 构建 + AI 生成 API。
+ST 服务端插件，为 qq-st-bridge（NoneBot2 QQ 机器人）提供统一的 prompt 构建 + AI 生成 API。
 
 ## 端点
 

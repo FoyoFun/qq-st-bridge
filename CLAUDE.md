@@ -1,4 +1,4 @@
-# nb_qq_bot — Project Context
+# qq-st-bridge — Project Context
 
 ## Overview
 

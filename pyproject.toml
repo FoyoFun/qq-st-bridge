@@ -1,5 +1,5 @@
 [project]
-name = "nb-qq-bot"
+name = "qq-st-bridge"
 description = "QQ机器人 - NoneBot2 + OneBot V11"
 requires-python = ">=3.9"
 

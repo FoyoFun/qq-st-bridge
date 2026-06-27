@@ -1,4 +1,4 @@
-# nb_qq_bot
+# qq-st-bridge
 
 将 QQ 群聊与 **SillyTavern AI 角色** 连接的机器人。  
 在群里 @机器人，即可与 SillyTavern 中的 AI 角色实时对话。
@@ -31,7 +31,7 @@ NapCat (QQ 客户端) ──WebSocket (OneBot V11)──▶ NoneBot2 (Python)
 ## 项目结构
 
 ```
-nb_qq_bot/
+qq-st-bridge/
 ├── bot.py                       # NoneBot2 入口
 ├── pyproject.toml               # 项目元数据 & 依赖
 ├── .env.example                 # 配置模板（复制为 .env 后填写）
@@ -52,7 +52,7 @@ nb_qq_bot/
 |------|------|
 | **SillyTavern** | AI 角色聊天前端，需已部署并运行 |
 | **NapCat** | QQ 机器人客户端（OneBot V11 协议实现） |
-| **Python ≥ 3.9** | 运行 nb_qq_bot |
+| **Python ≥ 3.9** | 运行 qq-st-bridge |
 | **Node.js ≥ 18** | 运行 SillyTavern（内置 fetch） |
 
 ## 安装与配置
@@ -66,7 +66,7 @@ nb_qq_bot/
 cp -r st/plugins/nb-qq-bot /path/to/SillyTavern/plugins/
 
 # 方式二：符号链接（Windows 需要管理员终端）
-mklink /D D:\TempFiles\SillyTavern\plugins\nb-qq-bot D:\Projects\nb_qq_bot\st\plugins\nb-qq-bot
+mklink /D D:\TempFiles\SillyTavern\plugins\nb-qq-bot D:\Projects\qq-st-bridge\st\plugins\nb-qq-bot
 ```
 
 确保 SillyTavern 的 `config.yaml` 中启用了服务端插件：
@@ -116,8 +116,8 @@ NapCat 是 QQ 机器人客户端，提供 OneBot V11 WebSocket 服务。
 cd /path/to/SillyTavern
 node server.js
 
-# 终端 2：再启动 nb_qq_bot
-cd /path/to/nb_qq_bot
+# 终端 2：再启动 qq-st-bridge
+cd /path/to/qq-st-bridge
 python bot.py
 ```
 
