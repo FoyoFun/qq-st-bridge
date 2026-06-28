@@ -1,62 +1,56 @@
 """
-Per-group concurrency control with acquisition timeout.
+Global ST operation lock — ensures only one SillyTavern request at a time.
 
-Prevents race conditions when two messages arrive simultaneously for the
-same group: without this, both handlers read the same chat history, both
-generate responses, and the last to save overwrites the first — losing
-an entire interaction.
+All groups share a single lock. This prevents:
+- Multiple concurrent AI generation calls hitting ST (and its backend)
+- ST internal state conflicts from overlapping chat read/write cycles
+- DeepSeek API rate-limit issues
+
+Fast local-only operations (like /status, /help) do NOT acquire this lock.
 """
 
 import asyncio
 import logging
 
 # ---------------------------------------------------------------------------
-# Per-group locks
+# Global ST operation lock (shared across all groups)
 # ---------------------------------------------------------------------------
 
-_group_locks: dict[int, asyncio.Lock] = {}
-"""One asyncio.Lock per active group, lazily created."""
+_st_lock = asyncio.Lock()
+"""Single global lock — only one ST operation in flight at a time."""
 
-DEFAULT_LOCK_TIMEOUT: float = 30.0
-"""Seconds to wait for a per-group lock before rejecting the request."""
+DEFAULT_ST_LOCK_TIMEOUT: float = 120.0
+"""Seconds to wait for the ST lock before rejecting.
 
-
-def _get_lock(group_id: int) -> asyncio.Lock:
-    """Get or create the per-group lock."""
-    if group_id not in _group_locks:
-        _group_locks[group_id] = asyncio.Lock()
-    return _group_locks[group_id]
+Matches ST_TIMEOUT since the longest operation (AI generation) can take
+up to that long. A waiting caller would time out alongside the in-flight
+request, or a bit sooner if there's queue buildup.
+"""
 
 
-async def acquire_group_lock(
-    group_id: int,
-    timeout: float = DEFAULT_LOCK_TIMEOUT,
-) -> bool:
-    """Try to acquire the per-group lock.
+async def acquire_st_lock(timeout: float = DEFAULT_ST_LOCK_TIMEOUT) -> bool:
+    """Try to acquire the global ST operation lock.
 
     Returns True on success, False if the timeout expires.
     """
-    lock = _get_lock(group_id)
     try:
-        acquired = await asyncio.wait_for(lock.acquire(), timeout=timeout)
+        acquired = await asyncio.wait_for(_st_lock.acquire(), timeout=timeout)
         return acquired
     except asyncio.TimeoutError:
         logging.warning(
-            f"Group {group_id}: lock acquisition timed out after {timeout}s"
+            f"ST lock: acquisition timed out after {timeout}s "
+            f"(ST may be overloaded or unresponsive)"
         )
         return False
 
 
-def release_group_lock(group_id: int) -> None:
-    """Release the per-group lock.
+def release_st_lock() -> None:
+    """Release the global ST operation lock.
 
-    Safe to call even if the lock was not acquired (RuntimeError suppressed).
+    Safe to call even if the lock was not held (RuntimeError suppressed).
     """
-    lock = _group_locks.get(group_id)
-    if lock is None:
-        return
     try:
-        lock.release()
+        _st_lock.release()
     except RuntimeError:
         # Lock was not held — nothing to release
         pass

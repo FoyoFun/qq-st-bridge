@@ -18,6 +18,7 @@ from typing import Optional
 import httpx
 
 from . import config
+from . import concurrency
 
 # ---------------------------------------------------------------------------
 # HTTP Client singleton
@@ -74,25 +75,36 @@ async def _fetch_csrf_token(client: httpx.AsyncClient) -> str:
 # ---------------------------------------------------------------------------
 
 async def auth_post(path: str, body: dict) -> httpx.Response:
-    """CSRF-lock-guarded POST to SillyTavern. Returns raw httpx.Response.
+    """Authenticated POST to SillyTavern. Returns raw httpx.Response.
 
-    Acquires the global CSRF lock, fetches a fresh token, and dispatches
-    a POST with the X-CSRF-Token header. The caller is responsible for
-    reading/parsing the response body and handling errors.
+    Two layers of serialization:
+    1. Global ST lock — only one ST operation in flight across ALL groups,
+       preventing ST (and its AI backend) from being hit concurrently.
+    2. CSRF lock — serializes token fetch + POST dispatch so concurrent
+       coroutines don't invalidate each other's tokens.
 
-    The lock is held only for the token fetch + POST dispatch; response
-    body parsing happens outside the lock so other handlers can proceed.
+    The global lock spans the entire call (token fetch → POST → response),
+    so another group's request cannot reach ST until this one completes.
     """
-    async with _csrf_lock:
-        client = await get_client()
-        token = await _fetch_csrf_token(client)
-        resp = await client.post(
-            f"{config.get_base_url()}{path}",
-            json=body,
-            headers={"X-CSRF-Token": token},
+    # Global ST lock — serializes all ST operations across all groups
+    if not await concurrency.acquire_st_lock():
+        raise RuntimeError(
+            "ST is currently busy processing another request — "
+            "please try again in a moment"
         )
-    # Response body is parsed outside the lock
-    return resp
+
+    try:
+        async with _csrf_lock:
+            client = await get_client()
+            token = await _fetch_csrf_token(client)
+            resp = await client.post(
+                f"{config.get_base_url()}{path}",
+                json=body,
+                headers={"X-CSRF-Token": token},
+            )
+        return resp
+    finally:
+        concurrency.release_st_lock()
 
 
 async def post_with_retry(path: str, body: dict) -> dict:

@@ -19,7 +19,6 @@ from nonebot.params import EventPlainText
 from nonebot.rule import is_type, to_me
 
 from . import chat_utils
-from . import concurrency
 from . import config
 from . import handlers
 from . import st_api
@@ -93,15 +92,9 @@ async def handle_at_me(
         )
         return
 
-    # --- Acquire per-group concurrency lock ---
-    if not await concurrency.acquire_group_lock(group_id):
-        await at_me.finish("正在处理上一条消息，请稍后再试...")
-        return
-
-    try:
-        await _chat_flow(gs, group_id, user_id, user_name, text)
-    finally:
-        concurrency.release_group_lock(group_id)
+    # Note: concurrency is handled globally by st_client.auth_post() —
+    # all ST operations across all groups are serialized there.
+    await _chat_flow(gs, group_id, user_id, user_name, text)
 
 
 # ---------------------------------------------------------------------------
