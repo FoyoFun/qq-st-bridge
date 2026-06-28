@@ -24,7 +24,7 @@ QQ Group @bot "hello"
 | File | Purpose |
 |------|---------|
 | `bot.py` | Entry point. Inits NoneBot, registers OneBot V11 adapter, loads plugins |
-| `src/plugins/st_bridge.py` | **Core plugin (~650 lines)** — the SillyTavern bridge logic |
+| `src/plugins/st_bridge.py` | **Core plugin (~830 lines)** — the SillyTavern bridge logic |
 | `.env` | Bot + ST bridge configuration (host, port, timeout, etc.) |
 | `data/group_states.json` | Persisted group state — character, preset, chat per group (survives restarts) |
 | `pyproject.toml` | Python project metadata, NoneBot adapter config |
@@ -44,7 +44,8 @@ The plugin is organized into these sections:
 2. **GroupState** — Per-group dataclass: `character_name`, `preset_name`, `avatar_url`, `chat_file`. Persisted to `data/group_states.json` on every change; auto-restored on startup via `_load_states()` / `_save_states()`.
 3. **NicknameMap** — `_nickname_map` (QQ号→昵称) and `_replace_qq_with_nickname()` for reply conversion
 4. **StClient** — `httpx.AsyncClient` wrapper for SillyTavern API:
-   - CSRF token management (fetch fresh token before each POST)
+   - CSRF token management (fetch fresh token before each POST, guarded by `_csrf_lock` to prevent concurrent token invalidation)
+   - Auto-reconnect: retries once on CSRF rejection (403) or connection errors by resetting the client (clearing stale cookies/session)
    - `st_get_characters()`, `st_get_presets()`, `st_get_character(avatar_url)`
    - `st_load_chat()`, `st_save_chat()`, `st_plugin_generate()` ← calls ST plugin for prompt building + AI generation
 5. **Chat History** — Read/write SillyTavern's JSONL chat files via ST API
@@ -129,7 +130,7 @@ asyncio.run(test())
 
 1. **FinishedException**: `at_me.finish()` raises `FinishedException` (NoneBot2's normal flow control). NEVER catch it in try/except blocks — always add `except FinishedException: raise` before `except Exception`.
 
-2. **CSRF token**: Must be fresh for each POST. The session cookie is handled by httpx's cookie jar automatically.
+2. **CSRF token**: Must be fresh for each POST. The session cookie is handled by httpx's cookie jar automatically. On 403 (CSRF rejection) or connection errors, the client auto-resets its session and retries once.
 
 3. **Model names**: Model is configured in the ST preset (not in `.env`). The `ST_MODEL` field is deprecated and should be left empty. Valid DeepSeek models: `deepseek-v4-flash`, `deepseek-v4-pro`.
 
@@ -177,3 +178,6 @@ so the model follows whatever is configured in SillyTavern's connection settings
 - current — Added group state persistence (`data/group_states.json`), survives bot restarts
 - current — Simplified user message format: `{QQ号}：{msg}` (was `{QQ号}对{char}说，{msg}`)
 - current — Model resolution: read from ST connection settings instead of preset
+- current — Auto-reconnect on CSRF/connection errors: `_reset_client()` + retry logic in `_post()` and `st_plugin_generate()`
+- current — Concurrent-safe CSRF token management via `_csrf_lock` (`asyncio.Lock`)
+- current — Improved error messages: RuntimeError (retry exhaustion) shows user-friendly hint instead of raw type name

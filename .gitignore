@@ -22,4 +22,5 @@ Thumbs.db
 
 # Local debug / scratch files
 *.txt
+bot_output.log
 

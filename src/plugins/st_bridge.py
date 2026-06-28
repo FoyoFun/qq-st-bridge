@@ -15,6 +15,7 @@ Commands:
   /help     - Show help
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -148,12 +149,16 @@ async def _close_client():
         await _client.aclose()
         _client = None
 
-_b64 = _url = None  # base url, cached
-def _base() -> str:
-    global _b64
-    if _b64 is None:
-        _b64 = ST_BASE_URL.rstrip("/")
-    return _b64
+async def _reset_client():
+    """Close and recreate the HTTP client (clears stale cookies/sessions)."""
+    logging.info("ST Bridge: resetting HTTP client (stale session cleared)")
+    await _close_client()
+    # _get_client() will lazily create a new client on next use
+
+# Lock to serialize CSRF token fetches across concurrent handlers.
+# Without it, two concurrent coroutines may get the same CSRF token;
+# the first POST consumes it, causing the second to fail with 403.
+_csrf_lock = asyncio.Lock()
 
 async def _csrf_token(client: httpx.AsyncClient) -> str:
     """Fetch a fresh CSRF token from SillyTavern."""
@@ -161,17 +166,51 @@ async def _csrf_token(client: httpx.AsyncClient) -> str:
     resp.raise_for_status()
     return str(resp.json()["token"])
 
+_b64 = _url = None  # base url, cached
+def _base() -> str:
+    global _b64
+    if _b64 is None:
+        _b64 = ST_BASE_URL.rstrip("/")
+    return _b64
+
 async def _post(path: str, body: dict) -> dict:
-    """Make an authenticated POST to SillyTavern API."""
-    client = await _get_client()
-    token = await _csrf_token(client)
-    resp = await client.post(
-        f"{_base()}{path}",
-        json=body,
-        headers={"X-CSRF-Token": token},
-    )
-    resp.raise_for_status()
-    return resp.json()
+    """Make an authenticated POST to SillyTavern API with auto-reconnect.
+
+    Retries once on connection errors or CSRF rejection (403)
+    by resetting the HTTP client (clearing stale cookies).
+    """
+    for attempt in range(2):
+        try:
+            # Lock: serialize CSRF token fetches so concurrent handlers
+            # don't invalidate each other's tokens.
+            async with _csrf_lock:
+                client = await _get_client()
+                token = await _csrf_token(client)
+                resp = await client.post(
+                    f"{_base()}{path}",
+                    json=body,
+                    headers={"X-CSRF-Token": token},
+                )
+            # POST body parsed outside the lock so other handlers can proceed
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403 and attempt == 0:
+                logging.warning(f"ST Bridge: CSRF rejected (403) on {path}, resetting client...")
+                await _reset_client()
+                await asyncio.sleep(1)
+                continue
+            raise
+        except (httpx.ConnectError, httpx.RemoteProtocolError) as e:
+            if attempt == 0:
+                logging.warning(f"ST Bridge: connection lost on {path} ({e}), reconnecting...")
+                await _reset_client()
+                await asyncio.sleep(1)
+                continue
+            raise
+
+    # Both attempts failed
+    raise RuntimeError(f"ST Bridge: failed to reach ST after retry ({path})")
 
 # ---------------------------------------------------------------------------
 # SillyTavern API helpers
@@ -251,33 +290,57 @@ async def st_plugin_generate(
 ) -> dict:
     """Call the nb-qq-bot ST plugin to build prompt and generate response.
 
+    Auto-retries once on connection errors or CSRF rejection.
     Returns: {"success": bool, "response_text": str, "error": str (if failed)}
     """
-    client = await _get_client()
-    token = await _csrf_token(client)
+    for attempt in range(2):
+        try:
+            # Lock: serialize CSRF token fetches to prevent concurrent
+            # handlers from invalidating each other's tokens.
+            async with _csrf_lock:
+                client = await _get_client()
+                token = await _csrf_token(client)
 
-    payload: dict = {
-        "avatar_url": avatar_url,
-        "preset_name": preset_name,
-        "chat_history": chat_history,
-        "user_message": user_message,
-        "user_name": user_name,
-        "qq_chat_behavior": _QQ_CHAT_BEHAVIOR.format(
-            character_name=character_name or "角色"
-        ),
-        "max_response_length": ST_MAX_RESPONSE_LENGTH,
-        "chat_completion_source": ST_CHAT_SOURCE,
-        "stream": False,
-    }
-    # Don't send model — let ST use the preset's configured model
+            payload: dict = {
+                "avatar_url": avatar_url,
+                "preset_name": preset_name,
+                "chat_history": chat_history,
+                "user_message": user_message,
+                "user_name": user_name,
+                "qq_chat_behavior": _QQ_CHAT_BEHAVIOR.format(
+                    character_name=character_name or "角色"
+                ),
+                "max_response_length": ST_MAX_RESPONSE_LENGTH,
+                "chat_completion_source": ST_CHAT_SOURCE,
+                "stream": False,
+            }
+            # Don't send model — let ST use the preset's configured model
 
-    resp = await client.post(
-        f"{_base()}/api/plugins/nb-qq-bot/generate",
-        json=payload,
-        headers={"X-CSRF-Token": token},
-    )
-    resp.raise_for_status()
-    return resp.json()
+            resp = await client.post(
+                f"{_base()}/api/plugins/nb-qq-bot/generate",
+                json=payload,
+                headers={"X-CSRF-Token": token},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403 and attempt == 0:
+                logging.warning("ST Bridge: CSRF rejected in plugin generate, resetting client...")
+                await _reset_client()
+                await asyncio.sleep(1)
+                continue
+            raise
+        except (httpx.ConnectError, httpx.RemoteProtocolError) as e:
+            if attempt == 0:
+                logging.warning(f"ST Bridge: connection lost in plugin generate ({e}), reconnecting...")
+                await _reset_client()
+                await asyncio.sleep(1)
+                continue
+            raise
+
+    # Both attempts failed — let the caller show a user-friendly error
+    raise RuntimeError("ST Bridge: failed to reach ST plugin after retry")
 
 # ---------------------------------------------------------------------------
 # QQ 群聊行为指令（置于 system prompt 最前面）
@@ -692,6 +755,10 @@ async def handle_at_me(event: GroupMessageEvent, text: str = EventPlainText()):
         if len(msg) > 400:
             msg = msg[:400] + "..."
         await at_me.finish(msg)
+        return
+    except RuntimeError:
+        # Retry exhaustion — both attempts failed (see st_plugin_generate)
+        await at_me.finish("SillyTavern 连接已断开，请检查 ST 是否在运行。")
         return
     except Exception as e:
         logging.exception("Plugin generate error")
