@@ -200,3 +200,104 @@ async def cmd_clear(group_id: int) -> str:
     gs.chat_file = None
     state.save_group_states()
     return "对话历史已清除。下次 @我 时将开始新对话。"
+
+
+# ---------------------------------------------------------------------------
+# /auto — 自动群聊参与管理
+# ---------------------------------------------------------------------------
+
+
+async def cmd_auto(group_id: int, args: str) -> str:
+    """Manage auto-participation settings for this group.
+
+    Sub-commands:
+      /auto on                  — enable with current or default settings
+      /auto off                 — disable
+      /auto status              — show current config
+      /auto freq <N> <W>        — trigger: N distinct users in W seconds
+      /auto cooldown <秒>        — seconds between auto-replies
+      /auto prob <0-100>        — trigger probability (percent)
+    """
+    gs = state.get_group_state(group_id)
+    parts = args.strip().split()
+    sub = parts[0].lower() if parts else ""
+
+    if sub in ("", "help"):
+        return (
+            "=== /auto 自动群聊参与 ===\n"
+            "/auto on                  — 启用（使用默认设置）\n"
+            "/auto off                 — 禁用\n"
+            "/auto status              — 查看当前设置\n"
+            "/auto freq <人数> <秒>     — 触发阈值（默认 3 30）\n"
+            "/auto cooldown <秒>       — 冷却时间（默认 120）\n"
+            "/auto prob <0-100>        — 触发概率%（默认 30）"
+        )
+
+    if sub == "on":
+        gs.auto_enabled = True
+        state.save_group_states()
+        return (
+            f"自动群聊参与已 开启\n"
+            f"  触发阈值: {gs.auto_msg_threshold} 人 / {gs.auto_msg_window} 秒\n"
+            f"  冷却时间: {gs.auto_cooldown} 秒\n"
+            f"  触发概率: {gs.auto_probability}%\n"
+            f"使用 /auto freq|cooldown|prob 调整参数"
+        )
+
+    if sub == "off":
+        gs.auto_enabled = False
+        state.save_group_states()
+        return "自动群聊参与已 关闭"
+
+    if sub == "status":
+        status_text = "已开启" if gs.auto_enabled else "已关闭"
+        return (
+            f"=== 自动群聊参与状态 ===\n"
+            f"  状态: {status_text}\n"
+            f"  触发阈值: {gs.auto_msg_threshold} 人 / {gs.auto_msg_window} 秒\n"
+            f"  冷却时间: {gs.auto_cooldown} 秒\n"
+            f"  触发概率: {gs.auto_probability}%"
+        )
+
+    if sub == "freq":
+        if len(parts) < 3:
+            return "用法: /auto freq <人数> <秒数>\n示例: /auto freq 3 30"
+        try:
+            n = int(parts[1])
+            w = int(parts[2])
+            if n < 1 or w < 5:
+                return "人数至少为 1，秒数至少为 5"
+        except ValueError:
+            return "参数需为整数。用法: /auto freq <人数> <秒数>"
+        gs.auto_msg_threshold = n
+        gs.auto_msg_window = w
+        state.save_group_states()
+        return f"触发阈值已更新: {n} 人 / {w} 秒"
+
+    if sub == "cooldown":
+        if len(parts) < 2:
+            return "用法: /auto cooldown <秒数>\n示例: /auto cooldown 120"
+        try:
+            c = int(parts[1])
+            if c < 10:
+                return "冷却时间至少为 10 秒"
+        except ValueError:
+            return "参数需为整数。用法: /auto cooldown <秒数>"
+        gs.auto_cooldown = c
+        state.save_group_states()
+        return f"冷却时间已更新: {c} 秒"
+
+    if sub == "prob":
+        if len(parts) < 2:
+            return "用法: /auto prob <0-100>\n示例: /auto prob 30"
+        try:
+            p = int(parts[1])
+            if p < 0 or p > 100:
+                return "概率需在 0-100 之间"
+        except ValueError:
+            return "参数需为整数。用法: /auto prob <0-100>"
+        gs.auto_probability = p
+        state.save_group_states()
+        return f"触发概率已更新: {p}%"
+
+    return f"未知子命令: {sub}\n发送 /auto help 查看用法"

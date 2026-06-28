@@ -12,6 +12,7 @@ Commands:
   /status   - Show current binding
   /newchat  - Start a new chat
   /clear    - Clear conversation history
+  /auto     - Manage auto-participation
   /help     - Show help
 """
 
@@ -20,14 +21,15 @@ import logging
 from nonebot import get_driver
 
 # Import sub-modules (triggers NoneBot2 handler registration as a side effect)
-from . import chat_handler  # noqa: F401  — registers on_message matcher
-from . import chat_utils    # noqa: F401
-from . import concurrency   # noqa: F401
-from . import config        # noqa: F401
-from . import handlers      # noqa: F401
-from . import st_api        # noqa: F401
-from . import st_client     # noqa: F401
-from . import state         # noqa: F401
+from . import auto_participate  # noqa: F401
+from . import chat_handler      # noqa: F401  — registers on_message matchers
+from . import chat_utils        # noqa: F401
+from . import concurrency       # noqa: F401
+from . import config            # noqa: F401
+from . import handlers          # noqa: F401
+from . import st_api            # noqa: F401
+from . import st_client         # noqa: F401
+from . import state             # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -52,6 +54,32 @@ async def _on_startup():
     config.ST_DEFAULT_PRESET = getattr(_driver_config, "st_default_preset", "")
     config.ST_DEFAULT_CHARACTER = getattr(_driver_config, "st_default_character", "")
 
+    # Auto-participate defaults
+    config.ST_AUTO_ENABLED = (
+        str(getattr(_driver_config, "st_auto_enabled", "false")).lower() == "true"
+    )
+    config.ST_AUTO_MSG_THRESHOLD = int(
+        getattr(_driver_config, "st_auto_msg_threshold", 3)
+    )
+    config.ST_AUTO_MSG_WINDOW = int(
+        getattr(_driver_config, "st_auto_msg_window", 30)
+    )
+    config.ST_AUTO_COOLDOWN = int(
+        getattr(_driver_config, "st_auto_cooldown", 120)
+    )
+    config.ST_AUTO_PROBABILITY = int(
+        getattr(_driver_config, "st_auto_probability", 30)
+    )
+
+    # Set defaults for groups encountered for the first time
+    state.set_default_auto_settings(
+        enabled=config.ST_AUTO_ENABLED,
+        threshold=config.ST_AUTO_MSG_THRESHOLD,
+        window=config.ST_AUTO_MSG_WINDOW,
+        cooldown=config.ST_AUTO_COOLDOWN,
+        probability=config.ST_AUTO_PROBABILITY,
+    )
+
     # Reset cached base URL
     config.reset_base_url()
 
@@ -59,7 +87,8 @@ async def _on_startup():
         f"ST Bridge loaded: base={config.ST_BASE_URL}, "
         f"source={config.ST_CHAT_SOURCE}, "
         f"model={config.ST_MODEL or 'from preset'}, "
-        f"timeout={config.ST_TIMEOUT}s"
+        f"timeout={config.ST_TIMEOUT}s, "
+        f"auto_participate={'on' if config.ST_AUTO_ENABLED else 'off'}"
     )
 
     # Restore persisted group states from disk

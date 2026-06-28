@@ -18,6 +18,7 @@ from nonebot.exception import FinishedException
 from nonebot.params import EventPlainText
 from nonebot.rule import is_type, to_me
 
+from . import auto_participate
 from . import chat_utils
 from . import config
 from . import handlers
@@ -98,6 +99,54 @@ async def handle_at_me(
 
 
 # ---------------------------------------------------------------------------
+# Non-@mention handler — feeds auto-participation buffer
+# ---------------------------------------------------------------------------
+
+# Catches ALL group messages (lower priority so @mention handler runs first)
+_all_msgs = on_message(
+    rule=is_type(GroupMessageEvent), priority=20, block=False
+)
+
+
+@_all_msgs.handle()
+async def handle_all_messages(
+    event: GroupMessageEvent, text: str = EventPlainText()
+):
+    """Feed every group message into the auto-participation buffer.
+
+    Skips: empty messages, @mentions (they go through handle_at_me),
+    bot's own messages, and commands.
+    """
+    text = text.strip()
+    if not text:
+        return
+
+    # Skip @mentions — they're handled by the main handler
+    if event.to_me:
+        return
+
+    # Skip commands
+    if text.startswith("/"):
+        return
+
+    # Skip bot's own messages
+    if str(event.user_id) == str(event.self_id):
+        return
+
+    group_id = event.group_id
+    user_id = event.user_id
+
+    try:
+        user_name = event.sender.card or event.sender.nickname or str(user_id)
+    except Exception:
+        user_name = str(user_id)
+
+    # Remember nickname and feed the auto-participation buffer
+    state.remember_user(user_id, user_name)
+    auto_participate.feed_message(group_id, user_id, user_name, text)
+
+
+# ---------------------------------------------------------------------------
 # Command dispatch
 # ---------------------------------------------------------------------------
 
@@ -118,8 +167,14 @@ async def _dispatch_command(text: str, group_id: int, user_name: str) -> None:
                 "/status    - 查看当前绑定\n"
                 "/newchat   - 开始新对话\n"
                 "/clear     - 清除对话历史\n"
+                "/auto      - 管理自动群聊参与\n"
                 "/help      - 显示此帮助\n\n"
                 "选择角色和预设后，直接 @我 发送消息即可与 AI 对话。"
+            )
+
+        elif cmd == "/auto":
+            await at_me.finish(
+                await handlers.cmd_auto(group_id, args)
             )
 
         elif cmd == "/chars":

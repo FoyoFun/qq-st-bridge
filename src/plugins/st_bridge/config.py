@@ -21,6 +21,16 @@ ST_MAX_RESPONSE_LENGTH: int = 800
 ST_DEFAULT_PRESET: str = ""
 ST_DEFAULT_CHARACTER: str = ""
 
+# ---------------------------------------------------------------------------
+# Auto-participate defaults (override per-group via /auto command)
+# ---------------------------------------------------------------------------
+
+ST_AUTO_ENABLED: bool = False
+ST_AUTO_MSG_THRESHOLD: int = 3    # distinct users in window
+ST_AUTO_MSG_WINDOW: int = 30      # seconds
+ST_AUTO_COOLDOWN: int = 120       # seconds between auto-replies
+ST_AUTO_PROBABILITY: int = 30     # percentage, 0-100
+
 # Cached base URL (without trailing slash)
 _base_url: str = "http://127.0.0.1:8000"
 
