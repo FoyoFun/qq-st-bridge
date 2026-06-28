@@ -39,7 +39,8 @@ QQ Group @bot "hello"
 | `src/plugins/st_bridge/state.py` | GroupState dataclass, JSON persistence, QQ↔nickname mapping |
 | `src/plugins/st_bridge/chat_utils.py` | Pure functions for ST JSONL format (filename, header, message, extraction) |
 | `src/plugins/st_bridge/handlers.py` | 7 /command handlers (chars, presets, char, preset, status, newchat, clear) |
-| `src/plugins/st_bridge/chat_handler.py` | @mention message handler — command dispatch + chat flow orchestrator |
+| `src/plugins/st_bridge/chat_handler.py` | @mention handler + all-messages handler — command dispatch + chat flow + auto-participation feeder |
+| `src/plugins/st_bridge/auto_participate.py` | Auto-participation: message buffer, trigger eval (freq+cooldown+probability), auto chat flow |
 | `src/plugins/st_bridge/concurrency.py` | Global ST operation lock — only one ST request at a time (all groups share) |
 
 ### ST Server Plugin
@@ -49,15 +50,17 @@ QQ Group @bot "hello"
 | `SillyTavern/plugins/nb-qq-bot/index.js` | Plugin entry — registers `POST /api/plugins/nb-qq-bot/generate` |
 | `SillyTavern/plugins/nb-qq-bot/prompt-builder.js` | Prompt construction — builds OpenAI-format messages from character + preset + history |
 
-## Plugin Architecture (modular, 9 files)
+## Plugin Architecture (modular, 10 files)
 
 ### Module dependency graph (bottom-up, zero circular imports)
 
 ```
-__init__.py ──→ config  concurrency  chat_handler
-                    │                    │
+__init__.py ──→ config  concurrency  chat_handler ──→ auto_participate
+                    │                    │                    │
                 st_client ──→ st_api ──→ handlers ──→ state  chat_utils
 ```
+
+`auto_participate` depends on `st_api`, `state`, `chat_utils`, `config`. It is NOT imported by any of those — the dependency is one-way. Only `chat_handler` (orchestrator) and `__init__` (loader) import it.
 
 ### Module descriptions
 
@@ -67,9 +70,10 @@ __init__.py ──→ config  concurrency  chat_handler
 4. **st_api.py** — ST API semantics. Cached character/preset lists. `get_characters()`, `get_presets()`, `get_character()`, `load_chat()`, `save_chat()`, `plugin_generate()`. Uses `st_client.auth_post()` and `st_client.post_with_retry()`.
 5. **state.py** — `GroupState` dataclass (character_name, preset_name, avatar_url, chat_file). `get_group_state()`, `save_group_states()`, `load_group_states()`. QQ↔nickname mapping via `remember_user()` / `replace_qq_with_nickname()`.
 6. **chat_utils.py** — Pure functions for ST JSONL: `new_chat_filename()`, `make_chat_header()`, `make_chat_message()`, `extract_history()`.
-7. **handlers.py** — One async function per /command. Each self-contained with error handling.
-8. **chat_handler.py** — `on_message` matcher registration + `handle_at_me()` — command dispatch + chat flow (load→generate→save→reply).
-9. **__init__.py** — Imports all sub-modules (triggers handler registration). Lifecycle: `on_startup` loads config/restores state/pre-fetches caches, `on_shutdown` closes HTTP client.
+7. **handlers.py** — One async function per /command (chars, presets, char, preset, status, newchat, clear, auto). Each self-contained with error handling. `/auto` uses sub-commands (on|off|status|freq|cooldown|prob) to keep the command surface small.
+8. **chat_handler.py** — Two `on_message` matchers: `handle_at_me` (priority 10, block=True) for @mentions, `handle_all_messages` (priority 20, block=False) feeding the auto-participation buffer. Command dispatch + chat flow orchestrator.
+9. **auto_participate.py** — Auto-participation engine. Per-group `deque` buffer (maxlen 20), trigger evaluation (N distinct users in W seconds + cooldown + probability), summary builder, background auto-chat flow via `bot.send_group_msg()`. All errors logged, never raised — best-effort participation. Depends on `st_api`, `state`, `chat_utils`, `config`; NOT imported by any of those.
+10. **__init__.py** — Imports all sub-modules (triggers handler registration). Lifecycle: `on_startup` loads config/restores state/pre-fetches caches, `on_shutdown` closes HTTP client.
 
 ### Message Flow (detailed)
 
@@ -77,6 +81,24 @@ __init__.py ──→ config  concurrency  chat_handler
 2. NoneBot2 auto-strips the @mention, sets `event.to_me = True`
 3. Handler checks: if empty → help; if `/cmd` → route to command; else → chat
 4. Chat flow: load ST chat history → `st_plugin_generate()` → ST plugin loads character + preset, builds full prompt, calls AI → save back to ST → reply to QQ
+
+### Auto-Participation Flow
+
+1. Every non-@mention group message → `handle_all_messages` handler (priority 20, block=False)
+2. Skips: @mentions (handled by priority 10), bot's own messages, /commands
+3. Calls `auto_participate.feed_message()` → appends to per-group `deque`, cleans expired entries
+4. Trigger check: N distinct users in W seconds? cooldown elapsed? dice roll < P%?
+5. If triggered → clears buffer, builds summary (`QQ号：内容` format), spawns background task
+6. Background task: load ST chat → `plugin_generate("群聊", summary)` → save → `bot.send_group_msg()`
+7. All errors caught and logged — never crashes, never blocks the message handler
+
+### Auto-Participation Configuration
+
+- Defaults in `.env` (`ST_AUTO_ENABLED`, `ST_AUTO_MSG_THRESHOLD`, etc.)
+- Per-group override via `/auto` commands, persisted in `group_states.json`
+- `GroupState` fields: `auto_enabled`, `auto_msg_threshold`, `auto_msg_window`, `auto_cooldown`, `auto_probability`
+- In-memory state (not persisted): message buffer (`deque`), last trigger timestamp
+- `/auto on` enables with current settings; `/auto off` disables; `/auto status` shows config
 
 ### User message format
 
@@ -204,6 +226,8 @@ so the model follows whatever is configured in SillyTavern's connection settings
 - current — Auto-reconnect on CSRF/connection errors: `_reset_client()` + retry logic
 - current — Concurrent-safe CSRF token management via `_csrf_lock` (`asyncio.Lock`)
 - current — Improved error messages: RuntimeError shows user-friendly hint instead of raw type name
-- current — **Modularized**: split 847-line monolith into 9 single-responsibility modules
+- current — **Modularized**: split 847-line monolith into 10 single-responsibility modules
 - current — **Global ST lock**: all groups share one `asyncio.Lock` — only one ST request at a time
 - current — CSRF lock consolidation: extracted `auth_post()` shared primitive, eliminating ~20 lines of duplicate retry code
+- current — **Auto-participation**: bot spontaneously joins discussions based on frequency + cooldown + probability triggers
+- current — `/auto` command with sub-commands (on|off|status|freq|cooldown|prob) — per-group config persisted
