@@ -131,7 +131,7 @@
 
 ## 六、与角色卡的配合
 
-角色卡由专属 skill（`qq-st-character-card`）按本系统的要求引导生成，
+角色卡由专属 skill（`foyofun-qq-st-character-card`）按本系统的要求引导生成，
 产出直接符合桥接的格式约定：纯口语示例对话、空格分条示范、
 [STICKER]/[POKE] 标记示例、QQ 语境的场景设定、以及供 `.env`
 `ST_INTEREST_KEYWORDS` 使用的兴趣关键词提取。
