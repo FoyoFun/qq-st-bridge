@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass, field
 
 from . import chat_utils
+from . import collector
 from . import config
 from . import context_builder
 from . import participation
@@ -131,10 +132,39 @@ async def run_turn(conv: str, tier: str, reason: str) -> None:
         await _run_turn_locked(conv, tier, reason)
 
 
+def continuation_wait_seconds(conv: str, max_age: float = 60.0) -> float:
+    """Seconds to hold before generating, when the last OTHER-person
+    message looks like half of an utterance ("说实话"…).
+
+    QQ users often split one sentence across messages; generating right
+    away produced "说实话什么/说完整" interruptions. Waiting a few
+    seconds lets the continuation land in the buffer first. Returns 0
+    when the last message is hers, too old, or looks complete.
+    """
+    import time as _time
+
+    last = collector.last(conv)
+    if last is None or last.is_self:
+        return 0.0
+    if _time.time() - last.ts > max_age:
+        return 0.0
+    if context_builder.looks_unfinished(last.text):
+        import random as _random
+        return _random.uniform(6.0, 12.0)
+    return 0.0
+
+
 async def _run_turn_locked(conv: str, tier: str, reason: str) -> None:
     gs = state.get_state(conv)
     if not (gs.character_name and gs.preset_name):
         return
+
+    # Hold the door for a likely continuation before snapshotting context
+    wait = continuation_wait_seconds(conv)
+    if wait > 0:
+        logging.info(f"ActionLoop: {conv} last message looks unfinished, "
+                     f"holding {wait:.1f}s for the follow-up")
+        await asyncio.sleep(wait)
 
     max_tokens = config.ST_LIGHT_TOKENS if tier == "light" else config.ST_HEAVY_TOKENS
     instruction = context_builder.build_instruction(tier, reason)

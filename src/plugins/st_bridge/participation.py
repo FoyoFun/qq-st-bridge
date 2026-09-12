@@ -208,9 +208,18 @@ def feed(msg: collector.ConvMsg, *, is_at_bot: bool = False,
         return
 
     if len(fresh) >= config.ST_CHECKPOINT_THRESHOLD:
-        schedule_turn(conv, "light", "batch", random.uniform(1.0, 4.0))
+        schedule_turn(conv, "light", "batch", _checkpoint_delay(fresh[-1]))
     elif _interest_hit(msg.text, gs):
-        schedule_turn(conv, "light", "keyword", random.uniform(2.0, 6.0))
+        schedule_turn(conv, "light", "keyword", _checkpoint_delay(msg))
+
+
+def _checkpoint_delay(trigger_msg: collector.ConvMsg) -> float:
+    """Trigger delay for a checkpoint; longer when the message looks like
+    half of an utterance, so the continuation lands before we look."""
+    from .context_builder import looks_unfinished
+    if looks_unfinished(trigger_msg.text):
+        return random.uniform(8.0, 15.0)
+    return random.uniform(1.0, 4.0)
 
 
 def on_poke(conv: str, poker_alias: str) -> None:
@@ -350,8 +359,12 @@ def _tick_active(st: ConvSocialState, conv: str, now: float) -> None:
         latest = collector.last(conv)
         if latest is not None:
             st.last_msg_ts = max(st.last_msg_ts, latest.ts)
-        schedule_turn(conv, "heavy", "batch", random.uniform(
-            config.ST_REPLY_DELAY_MIN, config.ST_REPLY_DELAY_MAX))
+        # typing delay; when the newest message looks half-said,
+        # _checkpoint_delay returns a longer window so the follow-up lands
+        delay = max(random.uniform(
+            config.ST_REPLY_DELAY_MIN, config.ST_REPLY_DELAY_MAX),
+            _checkpoint_delay(fresh[-1]))
+        schedule_turn(conv, "heavy", "batch", delay)
         return
 
     # Cold field: nobody said anything for a while

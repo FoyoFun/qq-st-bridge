@@ -154,6 +154,27 @@ sending: first bubble 2~8s; gaps 1~3s, 20% → 8~10s; ≤500 chars/bubble
 - @/private attention clears any booked `[WAKE]`/`[WAIT]` timers
   (superseded by direct interaction), avoiding a wasted checkpoint.
 
+## Unfinished-Utterance Handling (anti "说完整" interrupt)
+
+QQ users split one sentence across messages ("说实话" → "…"). Three
+layers keep her from interrupting with "说实话什么/说完整":
+
+1. **Detection** (`context_builder.looks_unfinished`): trailing
+   connectives ("我跟你说…"), open punctuation, lead-in openers
+   ("说实话/问一下/对了…"), or very short unpunctuated messages that are
+   not pure reactions ("哈哈哈哈"/"6"/"确实" are complete).
+2. **Bridge holds the door**: checkpoints triggered by an unfinished
+   message schedule with an 8~15s delay (`participation._checkpoint_delay`),
+   and every turn re-checks right before generating —
+   `action_loop.continuation_wait_seconds` sleeps 6~12s when the newest
+   other-person message looks half-said, letting the continuation land
+   in the buffer before the context snapshot.
+3. **Prompt side**: the atmosphere hint explicitly says "先别接，也别催"
+   for unfinished tails; the output contract instructs `[WAIT 1m]` and
+   forbids "说完整/然后呢"; the preset's 【读空气】 section covers the
+   same rule (the bridge contract is authoritative — the preset only
+   reinforces it).
+
 ## Gotchas & Pitfalls
 
 1. **FinishedException**: NoneBot flow control — never swallow it; add

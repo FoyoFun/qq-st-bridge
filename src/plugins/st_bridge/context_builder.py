@@ -53,18 +53,43 @@ def render_records(messages: list[collector.ConvMsg]) -> str:
 # Atmosphere (读空气) signals — computed facts, not opinions
 # ---------------------------------------------------------------------------
 
-# Heuristics ported from qq-bridge v2-wait.js: "message tail suggests the
-# speaker isn't finished".
+# Heuristics ported and extended from qq-bridge v2-wait.js: decide whether
+# a message looks like half of an utterance. QQ users routinely split ONE
+# utterance across several messages ("说实话" → "…"), so the bridge flags
+# likely continuations and waits instead of interrupting with "说完整".
 _UNFINISHED_TAIL_RE = re.compile(
-    r"(?:你知道|等一下|我跟你讲|其实吧|但是|所以说|然后|那个|就是|我想说|对了|等我|"
+    r"(?:你知道|等一下|我跟你讲|我跟你们讲|跟你们说|给你们说|其实吧|但是|所以说|然后|那个|就是|我想说|等我|"
     r"等等|我看看|还有|再说|主要是|毕竟|因为|所以|但是吧|回头|待会|晚点|等会)$"
 )
 _UNFINISHED_PUNCT_RE = re.compile(r"[，、；：,;:]$")
 _FINISHED_TAIL_RE = re.compile(r"[。！？!?…～~]+$")
 
+# Openers that promise a follow-up message ("说实话" alone is a lead-in,
+# not something to rush).
+_LEADIN_RE = re.compile(
+    r"^(?:说实话|讲真|老实说|不得不说|怎么说|怎么说呢|其实|其实吧|反正|对了|话说|话说回来|突然想到|"
+    r"我跟你讲|我跟你们讲|跟你们说|给你们说|说个事|问一下|问个事|有个事|这么说吧|是这样|就是|就是说|"
+    r"问题是我|关键是|我想说|我想|我觉得|我发现|而且|不过|但是吧)"
+)
+
+
+def _is_pure_reaction(s: str) -> bool:
+    """Pure reactions ("哈哈哈哈" "6" "确实") are complete, not lead-ins."""
+    if len(s) <= 6 and len(set(s)) <= 2:   # 哈哈哈哈哈 / 666 / ？？？
+        return True
+    return bool(re.fullmatch(
+        r"(?:哈哈+|嘿嘿+|嘻嘻+|嗨呀|哎呀|嗯+|哦+|噢+|好+|行|草+|6+|em+|ok|OK|确实|似了)[哈嘿嘻!！。～~]*",
+        s,
+    ))
+
 
 def looks_unfinished(text: str) -> bool:
-    """True when a message tail suggests the speaker isn't done talking."""
+    """True when a message looks like the first half of an utterance.
+
+    Matches: trailing connectives ("我跟你说…"), open punctuation, known
+    lead-in openers ("说实话"), or very short unpunctuated messages that
+    are not pure reactions.
+    """
     s = (text or "").strip()
     if not s:
         return False
@@ -72,7 +97,13 @@ def looks_unfinished(text: str) -> bool:
         return False
     if _UNFINISHED_TAIL_RE.search(s):
         return True
-    return bool(_UNFINISHED_PUNCT_RE.search(s))
+    if _UNFINISHED_PUNCT_RE.search(s):
+        return True
+    if _LEADIN_RE.match(s):
+        return True
+    if len(s) <= 4 and not _is_pure_reaction(s):
+        return True
+    return False
 
 
 def build_atmosphere(conv: str, char_name: str) -> str:
@@ -99,7 +130,9 @@ def build_atmosphere(conv: str, char_name: str) -> str:
         last = msgs[-1]
         ago = max(0, int(now - last.ts))
         when = f"{ago}秒前" if ago < 3600 else f"{ago // 3600}小时前"
-        tail = "，话像没说完，可能在等下文" if looks_unfinished(last.text) else ""
+        tail = ""
+        if looks_unfinished(last.text):
+            tail = "，话像没说完（起头或半句），大概率马上有下一条——先别接，也别催他说完"
         lines.append(f"最后一条是 {last.alias} 在{when}说的{tail}")
     else:
         lines.append("最近10分钟没人说话")
@@ -192,7 +225,9 @@ def build_instruction(tier: str, reason: str, extra: str = "") -> str:
     elif reason == "keyword":
         text = "记录里出现了你感兴趣的话题。先看看这个话题还在不在进行，想接就自然地接一句。"
     elif reason == "batch":
-        text = "看一眼大家聊到哪了：判断现在适不适合插话、有没有人在等你说话。不适合开口就 [SILENT]。"
+        text = ("看一眼大家聊到哪了：判断现在适不适合插话、有没有人在等你说话。"
+                "有人话只说了一半（起头词、很短没标点）就 [WAIT] 等他补完，绝不催他说完整。"
+                "不适合开口就 [SILENT]。")
     elif reason == "wake":
         text = "你之前说先潜水，现在时间到了。看看近况，有想接的话再说话，否则 [SILENT]。"
     elif reason == "wait":

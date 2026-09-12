@@ -78,12 +78,16 @@ def make_msg(text):
 
 
 async def main():  # noqa: C901
-    # Snapshot which data files exist so we can remove test-created junk
+    # Snapshot data/ BEFORE touching anything: pre-existing files (real
+    # runtime state written by the live bot) are restored byte-for-byte
+    # afterwards; files the test created are deleted.
     data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
-    existed = set()
+    snapshot: dict[str, bytes | None] = {}
     for root, _dirs, files in os.walk(data_dir):
         for name in files:
-            existed.add(os.path.abspath(os.path.join(root, name)))
+            path = os.path.abspath(os.path.join(root, name))
+            with open(path, "rb") as f:
+                snapshot[path] = f.read()
 
     conv = "group:123"
     ok = 0
@@ -178,7 +182,7 @@ async def main():  # noqa: C901
     )
     # 7a. threshold trigger: 3 fresh messages -> light checkpoint
     for i in range(3):
-        participation.feed(push(conv, "1", "甲", f"msg{i}"))
+        participation.feed(push(conv, "1", "甲", f"第{i}条测试消息"))
     # 7b. @ trigger -> heavy 'at'
     participation.feed(push(conv, "2", "乙", "@果穗 在吗"), is_at_bot=True)
     # 7c. private -> heavy
@@ -205,7 +209,7 @@ async def main():  # noqa: C901
     # ---- 8. active batch + cold field + wake timer ----
     st = participation._get(conv)
     st.next_check_at = time.time() - 1
-    participation.feed(push(conv, "1", "甲", "还在吗"))
+    participation.feed(push(conv, "1", "甲", "回个话呗朋友"))
     participation.run_tick()
     await asyncio.sleep(10)  # batch turn delay is 2~8s
     assert any(t[2] == "batch" and t[1] == "heavy" for t in TURN_LOG), TURN_LOG
@@ -286,7 +290,7 @@ async def main():  # noqa: C901
     await asyncio.sleep(10)
     assert len(TURN_LOG) == n_self, f"self message triggered a turn: {TURN_LOG[n_self:]}"
     # a real groupie message still triggers the active batch
-    participation.feed(push(conv2, "9", "丁", "有人说话"))
+    participation.feed(push(conv2, "9", "丁", "有人说话了吗"))
     st2.next_check_at = time.time() - 1
     participation.run_tick()
     await asyncio.sleep(10)
@@ -357,20 +361,60 @@ async def main():  # noqa: C901
     ok += 1
     print("[13] @/self markers + nickname tracking + timer supersede OK")
 
-    print(f"\nALL {ok}/13 CLOSED-LOOP TESTS PASSED")
+    # ---- 14. unfinished utterances: detect + hold, never interrupt ----
+    lu = context_builder.looks_unfinished
+    assert lu("说实话") is True            # lead-in opener (the live bug)
+    assert lu("问一下") is True
+    assert lu("我跟你们说") is True
+    assert lu("那个，") is True            # open punctuation
+    assert lu("我还真想整个比较温柔的人格") is False   # the completion itself
+    assert lu("感觉不对了") is False       # complete statement, not flagged
+    assert lu("哈哈哈哈") is False         # pure reaction
+    assert lu("确实") is False
+    assert lu("好的。") is False           # terminal punctuation
 
-    # Remove runtime files the test created (keep pre-existing ones)
+    # hold-before-generate: unfinished tail -> 6~12s, complete/stale -> 0
+    push(conv2, "9", "丁", "说实话")
+    w = action_loop.continuation_wait_seconds(conv2)
+    assert 6.0 <= w <= 12.0, w
+    push(conv2, "9", "丁", "就这样吧 你说呢。")
+    assert action_loop.continuation_wait_seconds(conv2) == 0.0
+    stale = collector.ConvMsg(conv=conv2, qq="9", alias="丁", text="说实话",
+                              ts=time.time() - 120)
+    collector._buffer(conv2).append(stale)
+    assert action_loop.continuation_wait_seconds(conv2) == 0.0
+    # checkpoint delay for unfinished triggers is the longer window
+    d = participation._checkpoint_delay(
+        collector.ConvMsg(conv=conv2, qq="9", alias="丁", text="说实话", ts=time.time()))
+    assert 8.0 <= d <= 15.0, d
+    ok += 1
+    print("[14] unfinished-utterance OK: detect/hold/no-interrupt")
+
+    print(f"\nALL {ok}/14 CLOSED-LOOP TESTS PASSED")
+
+    # Restore data/ to its pre-test state: delete files the test created,
+    # restore pre-existing files byte-for-byte (the live bot's runtime
+    # stores must survive test runs untouched).
     import shutil
     removed = 0
+    restored = 0
     for root, _dirs, files in os.walk(data_dir, topdown=False):
         for name in files:
             path = os.path.abspath(os.path.join(root, name))
-            if path not in existed:
-                os.remove(path)
+            if path in snapshot:
+                if snapshot[path] is not None:
+                    with open(path, "wb") as f:
+                        f.write(snapshot[path])  # restore original content
+                    restored += 1
+                else:
+                    os.remove(path)
+                    removed += 1
+            else:
+                os.remove(path)  # created by the test
                 removed += 1
         if not os.listdir(root) and os.path.abspath(root) != os.path.abspath(data_dir):
             shutil.rmtree(root, ignore_errors=True)
-    print(f"cleanup: removed {removed} test-created file(s)")
+    print(f"cleanup: removed {removed}, restored {restored} pre-existing file(s)")
 
 
 if __name__ == "__main__":
