@@ -29,6 +29,7 @@ class ConvMsg:
     text: str            # rendered readable text (segments resolved)
     ts: float            # unix timestamp
     is_self: bool = False
+    is_at: bool = False  # the message explicitly @'d the bot
 
 
 # ---------------------------------------------------------------------------
@@ -106,10 +107,11 @@ def _render_segments(message) -> tuple[str, bool]:
 # Collection API
 # ---------------------------------------------------------------------------
 
-def collect_group(event, text_override: str = "") -> ConvMsg | None:
+def collect_group(event, text_override: str = "", is_at: bool = False) -> ConvMsg | None:
     """Normalize one group message into the buffer.
 
-    Resolves/creates the sender's codename, records roster activity, and
+    Resolves/creates the sender's codename, records roster activity (with
+    the current display name, so nickname changes stay traceable), and
     appends to the rolling buffer. Returns the ConvMsg, or None when the
     message has no readable content.
     """
@@ -131,9 +133,10 @@ def collect_group(event, text_override: str = "") -> ConvMsg | None:
         return None
 
     alias = aliases.get_alias(qq, display)
-    aliases.record_seen(qq)
+    aliases.record_seen(qq, display)
 
-    msg = ConvMsg(conv=conv, qq=qq, alias=alias, text=text, ts=time.time())
+    msg = ConvMsg(conv=conv, qq=qq, alias=alias, text=text, ts=time.time(),
+                  is_at=is_at)
     _buffer(conv).append(msg)
     tracelog.qq_in(conv, alias, text)
     return msg
@@ -154,7 +157,7 @@ def collect_private(event) -> ConvMsg | None:
         return None
 
     alias = aliases.get_alias(qq, display)
-    aliases.record_seen(qq)
+    aliases.record_seen(qq, display)
 
     msg = ConvMsg(conv=conv, qq=qq, alias=alias, text=text, ts=time.time())
     _buffer(conv).append(msg)

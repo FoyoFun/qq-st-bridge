@@ -105,7 +105,7 @@ async def handle_at_me(
     if not gs.preset_name:
         await at_me.finish("请先使用 /presets 查看预设，然后用 /preset <名称> 选择预设。")
 
-    msg = collector.collect_group(event, text_override=text)
+    msg = collector.collect_group(event, text_override=text, is_at=True)
     if msg is None:
         return
 

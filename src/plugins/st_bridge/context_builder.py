@@ -31,12 +31,21 @@ def render_records(messages: list[collector.ConvMsg]) -> str:
     """Render buffered messages, one [HH:MM]-stamped line per message.
 
     Every message carries its own timestamp so the character can judge
-    when each line was said (pace, pauses, who answered whom) — a single
-    block header made all lines look equally fresh.
+    when each line was said (pace, pauses, who answered whom). Two
+    explicit markers remove all ambiguity about who is who:
+    - her own entries get「（你）」after the codename
+    - messages that @'d the bot get「（@你）」— visible even when the @
+      is buried under newer chatter
     """
     lines: list[str] = []
     for m in messages:
-        lines.append(f"[{_hhmm(m.ts)}] {m.alias}：{m.text}")
+        if m.is_self:
+            tag = "（你）"
+        elif m.is_at:
+            tag = "（@你）"
+        else:
+            tag = ""
+        lines.append(f"[{_hhmm(m.ts)}] {m.alias}{tag}：{m.text}")
     return "\n".join(lines)
 
 
@@ -100,14 +109,15 @@ def build_atmosphere(conv: str, char_name: str) -> str:
         my_last = mine[-1]
         since = int(now - my_last.ts)
         replies = [m for m in msgs if m.ts > my_last.ts and not m.is_self]
+        when = f"{since}秒前" if since < 120 else f"{since // 60}分钟前"
         if replies:
-            lines.append(f"你上次发言是{since // 60}分钟前，之后大家又说了{len(replies)}句话")
+            lines.append(f"你上次发言是{when}，之后大家又说了{len(replies)}句话")
         else:
-            lines.append(f"你上次发言是{since // 60}分钟前，之后没人接你的话")
+            lines.append(f"你上次发言是{when}，之后没人接你的话")
     else:
         lines.append("你最近没说过话")
 
-    if any(f"@{char_name}" in m.text for m in others):
+    if any(m.is_at for m in others):
         lines.append("有人@了你")
 
     return "【气氛观察】\n- " + "\n- ".join(lines)
@@ -170,7 +180,8 @@ def build_instruction(tier: str, reason: str, extra: str = "") -> str:
     the moment first, speaking is optional.
     """
     if reason == "at":
-        text = "记录最后有人@你，请自然地回应。"
+        text = ("记录中标了「（@你）」的消息在等你回应，请优先回应它；"
+                "它之后大家聊的新话题如果你也想接，可以接着聊。")
     elif reason == "poke":
         text = "有人在群里戳了戳你。可以回应一句，也可以不理会。"
     elif reason == "private":

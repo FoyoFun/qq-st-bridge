@@ -132,6 +132,18 @@ sending: first bubble 2~8s; gaps 1~3s, 20% → 8~10s; ≤500 chars/bubble
 
 - Every record line carries its own `[HH:MM]` stamp:
   `[14:32] 阿伟：今天好累` — pace and pauses are visible per message.
+- Two inline identity markers remove all ambiguity (explained to the
+  model in `QQ_CHAT_BEHAVIOR`):
+  - her own entries: `[14:33] 果穗（你）：哈哈`
+  - messages that @'d the bot: `[14:32] 阿伟（@你）：今天天气如何` —
+    set via `collector.collect_group(..., is_at=True)`, visible even
+    when the @ is buried under newer chatter (the @-turn fires 2~8s
+    later, so newer messages may surround it; the "at" instruction
+    says to answer the @ first and optionally join the newer topic).
+- Roster lines append「（现用昵称：X）」when a member's current group
+  card/nickname differs from the frozen codename
+  (`aliases.record_seen(qq, display)` tracks it), so raw-text nickname
+  mentions still map to the right person after a rename.
 - A computed **【气氛观察】** block (读空气 signals) is injected before
   the turn instruction: 10-min message density + speaker count, who
   spoke last (with "话像没说完" heuristic from `looks_unfinished`),
@@ -139,6 +151,8 @@ sending: first bubble 2~8s; gaps 1~3s, 20% → 8~10s; ≤500 chars/bubble
   and whether anyone @'d her. Facts only — the judgment stays with the
   model. The preset adds a 【读空气】 section teaching when to speak
   and when staying silent is the right move.
+- @/private attention clears any booked `[WAKE]`/`[WAIT]` timers
+  (superseded by direct interaction), avoiding a wasted checkpoint.
 
 ## Gotchas & Pitfalls
 

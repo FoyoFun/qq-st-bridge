@@ -131,7 +131,7 @@ async def main():  # noqa: C901
     assert "[HH" in records or "[" in records, "time marker missing"
     obs, digest = context_builder.build_observation(
         conv, "果穗", "看一眼群聊。")
-    assert "【群聊记录】" in obs and "果穗：" in obs
+    assert "【群聊记录】" in obs and "果穗（你）：" in obs
     assert "【当前时间】" in obs
     instr = context_builder.build_instruction("light", "probe")
     assert "[SILENT]" in instr
@@ -325,7 +325,39 @@ async def main():  # noqa: C901
     ok += 1
     print("[12] timestamps/atmosphere/burst-record OK")
 
-    print(f"\nALL {ok}/12 CLOSED-LOOP TESTS PASSED")
+    # ---- 13. @/self markers + nickname tracking + timer supersede ----
+    ev_at = FakeEvent(123, 111, make_msg("今天天气如何"), card="阿伟新昵称")
+    msg_at = collector.collect_group(ev_at, text_override="今天天气如何", is_at=True)
+    assert msg_at.is_at
+    rec_at = context_builder.render_records([msg_at])
+    assert "（@你）" in rec_at and rec_at.startswith("["), rec_at
+    rec_self = context_builder.render_records([
+        collector.ConvMsg(conv=conv, qq="", alias="果穗", text="哈哈",
+                          ts=time.time(), is_self=True)
+    ])
+    assert "果穗（你）：哈哈" in rec_self, rec_self
+
+    # nickname change is tracked, codename stays frozen
+    member = aliases.get_member(111)
+    assert member.alias == a1, "codename must not follow nickname changes"
+    assert member.last_display == "阿伟新昵称"
+    assert any("现用昵称：阿伟新昵称" in l for l in aliases.roster_lines())
+
+    # @ supersedes booked WAKE/WAIT timers
+    conv4 = "group:999"
+    state._states[conv4] = GroupState(
+        social_enabled=True, character_name="果穗", preset_name="QQ群聊角色扮演",
+    )
+    st4 = participation._get(conv4)
+    st4.wake_at = time.time() + 600
+    st4.wait_at = time.time() + 300
+    participation.feed(push(conv4, "5", "戊", "@果穗 看我看我"), is_at_bot=True)
+    assert st4.wake_at == 0.0 and st4.wait_at == 0.0
+    await asyncio.sleep(9)  # let the scheduled @ turn (stubbed) run out
+    ok += 1
+    print("[13] @/self markers + nickname tracking + timer supersede OK")
+
+    print(f"\nALL {ok}/13 CLOSED-LOOP TESTS PASSED")
 
     # Remove runtime files the test created (keep pre-existing ones)
     import shutil

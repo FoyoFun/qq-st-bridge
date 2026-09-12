@@ -159,6 +159,13 @@ def feed(msg: collector.ConvMsg, *, is_at_bot: bool = False,
 
     gs = state.get_state(conv)
 
+    # Direct human attention (@/private) supersedes any booked timers:
+    # a stale [WAKE]/[WAIT] checkpoint firing right after she answered the
+    # @ would only waste a generation and produce an odd "时间到了" line.
+    if is_private or is_at_bot:
+        st.wake_at = 0.0
+        st.wait_at = 0.0
+
     # Private messages are always delivered immediately (heavy tier)
     if is_private:
         st.last_msg_ts = now

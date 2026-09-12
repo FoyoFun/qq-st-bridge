@@ -34,3 +34,6 @@ bot_output.log
 
 # Runtime logs
 logs/
+
+# Local AI workflow store (foyofun skills)
+.agents/

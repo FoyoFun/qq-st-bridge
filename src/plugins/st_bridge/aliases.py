@@ -30,6 +30,7 @@ class MemberInfo:
     last_seen: float = 0.0
     msg_count: int = 0
     note: str = ""          # manual impression note (/note command)
+    last_display: str = ""  # most recent group card / nickname (changes freely)
 
 
 # qq(str) -> MemberInfo
@@ -120,6 +121,7 @@ def load() -> None:
             last_seen=float(info_raw.get("last_seen", 0.0)),
             msg_count=int(info_raw.get("msg_count", 0)),
             note=str(info_raw.get("note", "")),
+            last_display=str(info_raw.get("last_display", "")),
         )
         _members[member.qq] = member
         _alias_index.setdefault(member.alias.lower(), member.qq)
@@ -144,6 +146,7 @@ def save() -> None:
                 "last_seen": m.last_seen,
                 "msg_count": m.msg_count,
                 "note": m.note,
+                "last_display": m.last_display,
             }
             for m in _members.values()
         }
@@ -184,14 +187,22 @@ def get_alias(qq: int | str, display_name: str = "") -> str:
     return alias
 
 
-def record_seen(qq: int | str, is_self: bool = False) -> None:
-    """Update last-seen timestamp and message counter for a member."""
+def record_seen(qq: int | str, display_name: str = "") -> None:
+    """Update last-seen timestamp, message counter, and current nickname.
+
+    The codename is frozen at first sight, but the CURRENT group card /
+    nickname is kept so the roster can map raw-text nickname mentions to
+    the stable codename after a member renames themselves.
+    """
     member = _members.get(str(qq))
     if member is None:
         return
     member.last_seen = time.time()
-    if not is_self:
-        member.msg_count += 1
+    member.msg_count += 1
+    name = (display_name or "").strip()
+    if name and name != member.last_display:
+        member.last_display = name
+        save()
 
 
 def resolve_qq(alias: str) -> Optional[str]:
@@ -212,7 +223,10 @@ def set_note(qq: int | str, note: str) -> bool:
 def roster_lines(limit: int = 20) -> list[str]:
     """Render the roster for prompt injection, most recently active first.
 
-    Lines look like: "- 阿伟：聊过35次，最近22:30；印象：爱聊游戏"
+    Lines look like:
+    "- 阿伟：聊过35次，3分钟前活跃（现用昵称：阿伟本伟）；印象：爱聊游戏"
+    The current-nickname hint lets the model connect raw-text nickname
+    mentions to the frozen codename after a member renames themselves.
     """
     now = time.time()
     members = sorted(_members.values(), key=lambda m: m.last_seen, reverse=True)
@@ -229,6 +243,7 @@ def roster_lines(limit: int = 20) -> list[str]:
                 recent = f"{int(delta // 86400)}天前见过"
         else:
             recent = "暂无活动"
+        display = f"（现用昵称：{m.last_display}）" if m.last_display and m.last_display != m.alias else ""
         extra = f"；印象：{m.note}" if m.note else ""
-        lines.append(f"- {m.alias}：{stats}，{recent}{extra}")
+        lines.append(f"- {m.alias}：{stats}，{recent}{display}{extra}")
     return lines
