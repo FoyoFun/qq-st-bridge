@@ -163,7 +163,10 @@ def build_observation(
         records = "（最近没有新消息）"
 
     atmosphere = build_atmosphere(conv, char_name)
-    body = f"【群聊记录】\n{records}"
+    # Venue-aware header: the same preset serves group and private chats,
+    # the observation itself tells the model which room it is in.
+    header = "【私聊记录】" if conv.startswith("private:") else "【群聊记录】"
+    body = f"{header}\n{records}"
     if atmosphere:
         body = f"{body}\n\n{atmosphere}"
     body = f"{body}\n\n{instruction}"

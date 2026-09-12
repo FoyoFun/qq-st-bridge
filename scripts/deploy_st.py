@@ -63,16 +63,24 @@ def write_card(png_path: str, card: dict) -> None:
 
     out = [data[:8]]
     seen_chara = False
+    seen_ccv3 = False
     for ctype, payload in chunks:
         if ctype == "tEXt" and payload.split(b"\x00", 1)[0] == b"chara":
             out.append(build_chunk("tEXt", b"chara\x00" + chara_b64))
             seen_chara = True
         elif ctype == "tEXt" and payload.split(b"\x00", 1)[0] == b"ccv3":
             out.append(build_chunk("tEXt", b"ccv3\x00" + ccv3_b64))
+            seen_ccv3 = True
         else:
             out.append(build_chunk(ctype, payload))
-    if not seen_chara:  # v2 chunk missing: insert before IEND
-        out.insert(-1, build_chunk("tEXt", b"chara\x00" + chara_b64))
+    if not seen_chara or not seen_ccv3:
+        # Fresh container (or legacy file missing one format): insert the
+        # missing chunks before IEND. Order after IHDR/IDAT is fine — ST
+        # scans all tEXt chunks regardless of position.
+        if not seen_chara:
+            out.insert(-1, build_chunk("tEXt", b"chara\x00" + chara_b64))
+        if not seen_ccv3:
+            out.insert(-1, build_chunk("tEXt", b"ccv3\x00" + ccv3_b64))
 
     tmp = png_path + ".tmp"
     with open(tmp, "wb") as f:
@@ -111,7 +119,15 @@ def main() -> None:
             continue
         with open(os.path.join(src_chars, name), encoding="utf-8") as f:
             card = json.load(f)
-        png_path = os.path.join(dst_chars, os.path.splitext(name)[0] + ".png")
+        base = os.path.splitext(name)[0]
+        png_path = os.path.join(dst_chars, base + ".png")
+        if not os.path.exists(png_path):
+            # New character: seed the PNG container from a repo-provided
+            # base image (st/char/<name>.png) if the user supplied one.
+            repo_png = os.path.join(src_chars, base + ".png")
+            if os.path.exists(repo_png):
+                shutil.copyfile(repo_png, png_path)
+                print(f"  seeded container from repo image: {base}.png")
         if os.path.exists(png_path):
             try:
                 write_card(png_path, card)
@@ -119,7 +135,11 @@ def main() -> None:
                 errors += 1
                 print(f"  FAILED {name}: {e}")
         else:
-            print(f"  no PNG container for {name}, skipped")
+            errors += 1
+            print(
+                f"  FAILED {name}: no PNG container. Drop any square PNG as "
+                f"st/char/{base}.png (the avatar image) and re-run deploy."
+            )
     print(f"characters -> {dst_chars}")
 
     if errors:
