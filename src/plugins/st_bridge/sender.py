@@ -14,6 +14,7 @@ the model sees its own utterances next turn.
 import asyncio
 import logging
 import random
+import time
 from dataclasses import dataclass, field
 
 from . import collector
@@ -104,6 +105,46 @@ class _SendItem:
 _queue: asyncio.Queue = asyncio.Queue()
 _worker_task: asyncio.Task | None = None
 
+# Her recent replies per conversation, recorded at ENQUEUE time (not send
+# time): two turns can fire closer together than the burst takes to send,
+# so the collector buffer may not hold her last reply yet when the next
+# turn generates. This registry is what is_repeat() checks against.
+_recent_replies: dict[str, list[tuple[float, str]]] = {}
+_REPEAT_WINDOW = 600.0     # seconds a previous reply stays "recent"
+_REPEAT_TAIL = 8           # per-conversation entries to keep
+
+
+def _normalize(text: str) -> str:
+    """Whitespace-free form for exact-repeat comparison."""
+    return "".join((text or "").split())
+
+
+def is_repeat(conv: str, text: str) -> bool:
+    """True when this exact reply was already sent to conv recently.
+
+    Guards the observed failure mode: a wait-turn reply landing 0.5s
+    before a batch turn, the model not seeing it in the records and
+    saying the same thing twice.
+    """
+    key = _normalize(text)
+    if not key:
+        return False
+    now = time.time()
+    return any(
+        now - ts <= _REPEAT_WINDOW and prev == key
+        for ts, prev in _recent_replies.get(conv, [])
+    )
+
+
+def _remember_reply(conv: str, text: str) -> None:
+    now = time.time()
+    entries = [
+        (ts, prev) for ts, prev in _recent_replies.get(conv, [])
+        if now - ts <= _REPEAT_WINDOW
+    ]
+    entries.append((now, _normalize(text)))
+    _recent_replies[conv] = entries[-_REPEAT_TAIL:]
+
 
 def rand_reply_delay() -> float:
     return random.uniform(config.ST_REPLY_DELAY_MIN, config.ST_REPLY_DELAY_MAX)
@@ -121,6 +162,7 @@ def enqueue_text(conv: str, text: str, char_name: str) -> int:
     if not bubbles:
         return 0
     full_text = "\n".join(bubbles)
+    _remember_reply(conv, full_text)
     delay = rand_reply_delay()
     for i, bubble in enumerate(bubbles):
         if i > 0:

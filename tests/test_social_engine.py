@@ -153,6 +153,22 @@ async def main():  # noqa: C901
     ok += 1
     print(f"[5] sender OK: CJK split={len(b)}, latin kept, hard-split={len(long_guard)}")
 
+    # ---- 5b. sender: repeat guard (enqueue-time registry) ----
+    conv_r = "group:repeat-test"
+    sender._recent_replies.pop(conv_r, None)
+    reply = "呵呵，天使哪有我这么爱走神的"
+    assert not sender.is_repeat(conv_r, reply)
+    assert sender.enqueue_text(conv_r, reply, "静流") == 1
+    assert sender.is_repeat(conv_r, reply)
+    assert sender.is_repeat(conv_r, "呵呵，天使哪有我这么爱走神的 ")  # whitespace-insensitive
+    assert not sender.is_repeat(conv_r, "今天天气不错")
+    while not sender._queue.empty():
+        sender._queue.get_nowait()
+        sender._queue.task_done()
+    sender._recent_replies.pop(conv_r, None)
+    ok += 1
+    print("[5b] sender OK: repeat guard detects enqueue-time duplicates")
+
     # ---- 6. action_loop: marker parsing ----
     p = action_loop.parse_actions
     r = p("[SILENT]")
@@ -390,7 +406,7 @@ async def main():  # noqa: C901
     ok += 1
     print("[14] unfinished-utterance OK: detect/hold/no-interrupt")
 
-    print(f"\nALL {ok}/14 CLOSED-LOOP TESTS PASSED")
+    print(f"\nALL {ok}/{ok} CLOSED-LOOP TESTS PASSED")
 
     # Restore data/ to its pre-test state: delete files the test created,
     # restore pre-existing files byte-for-byte (the live bot's runtime

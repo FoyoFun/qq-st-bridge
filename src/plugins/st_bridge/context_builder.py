@@ -235,7 +235,8 @@ def build_instruction(tier: str, reason: str, extra: str = "") -> str:
     elif reason == "probe":
         text = "群里安静了一会儿。想试探性地说一句就说，不想说就 [SILENT]。"
     elif reason == "exit":
-        text = "你聊了一阵子了，自然地说一句收尾的话（比如先去忙/先潜了），之后就安静下来。"
+        text = ("你聊了一阵子了。想收尾就自然说一句（比如先去忙/先潜了）；"
+                "最近已经说过收尾的话、或者对方明显去忙了/散了，就 [SILENT]，不用再收一次。")
     else:
         text = "看一眼群聊，判断要不要说话；不说话就 [SILENT]。"
 

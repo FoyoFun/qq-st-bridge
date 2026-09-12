@@ -216,8 +216,12 @@ async def _run_turn_locked(conv: str, tier: str, reason: str) -> None:
     spoken_parts: list[str] = []
 
     if actions.text:
-        n = sender.enqueue_text(conv, actions.text, gs.character_name)
-        spoken_parts.extend(_last_bubbles(n, actions.text))
+        if sender.is_repeat(conv, actions.text):
+            logging.info(f"ActionLoop: dropped exact repeat of her recent reply on {conv}")
+            actions.text = ""
+        else:
+            n = sender.enqueue_text(conv, actions.text, gs.character_name)
+            spoken_parts.extend(_last_bubbles(n, actions.text))
 
     for tag in actions.stickers:
         entry = stickers.find(tag)
