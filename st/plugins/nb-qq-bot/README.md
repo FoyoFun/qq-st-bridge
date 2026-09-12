@@ -29,7 +29,7 @@ POST /api/plugins/nb-qq-bot/generate
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `avatar_url` | ✅ | ST 角色文件名（如 `小宫果穗.png`） |
+| `avatar_url` | ✅ | ST 角色文件名（如 `水无月静流.png`） |
 | `preset_name` | ✅ | ST 预设名称（需在 `openai_setting_names` 中） |
 | `user_message` | ✅ | 当前用户消息文本 |
 | `chat_history` | — | 对话历史（ST JSONL 格式，可选） |

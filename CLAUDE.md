@@ -89,7 +89,7 @@ state / chat_utils / config / handlers are leaves
 
 - `st/preset/QQ群聊角色扮演.json` — persona/说话规则/该说与不该说/AI味黑名单 +
   final-output check in Post-History Instructions.
-- `st/char/小宫果穗.json` — mes_example rewritten as pure QQ-chat style
+- `st/char/水无月静流.json` — mes_example written as pure QQ-chat style
   (space-split bubbles, [STICKER]/[POKE] examples); scenario set in a QQ group.
   Deployed by re-embedding the JSON into the character PNG (chara/ccv3 chunks).
 
@@ -134,7 +134,7 @@ sending: first bubble 2~8s; gaps 1~3s, 20% → 8~10s; ≤500 chars/bubble
   `[14:32] 阿伟：今天好累` — pace and pauses are visible per message.
 - Two inline identity markers remove all ambiguity (explained to the
   model in `QQ_CHAT_BEHAVIOR`):
-  - her own entries: `[14:33] 果穗（你）：哈哈`
+  - her own entries: `[14:33] 静流（你）：哈哈`
   - messages that @'d the bot: `[14:32] 阿伟（@你）：今天天气如何` —
     set via `collector.collect_group(..., is_at=True)`, visible even
     when the @ is buried under newer chatter (the @-turn fires 2~8s

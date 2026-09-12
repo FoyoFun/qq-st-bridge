@@ -126,7 +126,7 @@ python bot.py
 ## 使用方法
 
 ```
-@bot /char 小宫果穗        选择角色
+@bot /char 水无月静流      选择角色
 @bot /preset QQ群聊角色扮演 选择预设
 @bot /social on            开启社交引擎（像群友一样自发参与）
 @bot /status               查看绑定与状态机阶段

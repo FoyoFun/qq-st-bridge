@@ -120,7 +120,7 @@ async def main():  # noqa: C901
     ev = FakeEvent(123, 111, make_msg("今天好累啊"), card=a1)
     msg = collector.collect_group(ev)
     assert msg and msg.alias == a1 and msg.text == "今天好累啊"
-    collector.record_self(conv, "辛苦啦~", "果穗")
+    collector.record_self(conv, "辛苦啦~", "静流")
     assert collector.last(conv).is_self
     assert len(collector.recent(conv)) == 2
     ok += 1
@@ -134,8 +134,8 @@ async def main():  # noqa: C901
     records = context_builder.render_records(collector.recent(conv))
     assert "[HH" in records or "[" in records, "time marker missing"
     obs, digest = context_builder.build_observation(
-        conv, "果穗", "看一眼群聊。")
-    assert "【群聊记录】" in obs and "果穗（你）：" in obs
+        conv, "静流", "看一眼群聊。")
+    assert "【群聊记录】" in obs and "静流（你）：" in obs
     assert "【当前时间】" in obs
     instr = context_builder.build_instruction("light", "probe")
     assert "[SILENT]" in instr
@@ -173,18 +173,18 @@ async def main():  # noqa: C901
     # ---- 7. participation: triggers + state machine ----
     action_loop.run_turn = fake_run_turn  # stub external effects
     state._states[conv] = GroupState(
-        social_enabled=True, character_name="果穗",
+        social_enabled=True, character_name="静流",
         preset_name="QQ群聊角色扮演",
     )
     state._states["private:555"] = GroupState(
-        social_enabled=True, character_name="果穗",
+        social_enabled=True, character_name="静流",
         preset_name="QQ群聊角色扮演",
     )
     # 7a. threshold trigger: 3 fresh messages -> light checkpoint
     for i in range(3):
         participation.feed(push(conv, "1", "甲", f"第{i}条测试消息"))
     # 7b. @ trigger -> heavy 'at'
-    participation.feed(push(conv, "2", "乙", "@果穗 在吗"), is_at_bot=True)
+    participation.feed(push(conv, "2", "乙", "@静流 在吗"), is_at_bot=True)
     # 7c. private -> heavy
     participation.feed(push("private:555", "555", "丙", "在吗"), is_private=True)
 
@@ -276,7 +276,7 @@ async def main():  # noqa: C901
     # ---- 11. self messages NEVER trigger a turn (regression) ----
     conv2 = "group:777"
     state._states[conv2] = GroupState(
-        social_enabled=True, character_name="果穗", preset_name="QQ群聊角色扮演",
+        social_enabled=True, character_name="静流", preset_name="QQ群聊角色扮演",
     )
     st2 = participation._get(conv2)
     st2.phase = "active"
@@ -284,7 +284,7 @@ async def main():  # noqa: C901
     st2.last_active_msg_at = time.time() - 60
     n_self = len(TURN_LOG)
     # her own bubbles land in the buffer (async, like the real sender)
-    collector.record_self(conv2, "我自己说的话\n第二条", "果穗")
+    collector.record_self(conv2, "我自己说的话\n第二条", "静流")
     st2.next_check_at = time.time() - 1
     participation.run_tick()
     await asyncio.sleep(10)
@@ -312,17 +312,17 @@ async def main():  # noqa: C901
 
     conv3 = "group:888"
     state._states[conv3] = GroupState(
-        social_enabled=True, character_name="果穗", preset_name="QQ群聊角色扮演",
+        social_enabled=True, character_name="静流", preset_name="QQ群聊角色扮演",
     )
     push(conv3, "1", "甲", "今天好累")
     push(conv3, "2", "乙", "怎么了")
-    atmo = context_builder.build_atmosphere(conv3, "果穗")
+    atmo = context_builder.build_atmosphere(conv3, "静流")
     assert "【气氛观察】" in atmo and "最后一条" in atmo and "你最近没说过话" in atmo, atmo
-    obs3, _ = context_builder.build_observation(conv3, "果穗", "看一眼。")
+    obs3, _ = context_builder.build_observation(conv3, "静流", "看一眼。")
     assert "【气氛观察】" in obs3 and "【群友名册】" in obs3
 
     # enqueue a 3-bubble burst -> 3 queue items, ONE record on the last
-    n_bubbles = sender.enqueue_text(conv3, "第一句 第二句 第三句", "果穗")
+    n_bubbles = sender.enqueue_text(conv3, "第一句 第二句 第三句", "静流")
     assert n_bubbles == 3
     items = [sender._queue.get_nowait() for _ in range(3)]
     assert [i.record_text for i in items] == ["", "", "第一句\n第二句\n第三句"]
@@ -336,10 +336,10 @@ async def main():  # noqa: C901
     rec_at = context_builder.render_records([msg_at])
     assert "（@你）" in rec_at and rec_at.startswith("["), rec_at
     rec_self = context_builder.render_records([
-        collector.ConvMsg(conv=conv, qq="", alias="果穗", text="哈哈",
+        collector.ConvMsg(conv=conv, qq="", alias="静流", text="哈哈",
                           ts=time.time(), is_self=True)
     ])
-    assert "果穗（你）：哈哈" in rec_self, rec_self
+    assert "静流（你）：哈哈" in rec_self, rec_self
 
     # nickname change is tracked, codename stays frozen
     member = aliases.get_member(111)
@@ -350,12 +350,12 @@ async def main():  # noqa: C901
     # @ supersedes booked WAKE/WAIT timers
     conv4 = "group:999"
     state._states[conv4] = GroupState(
-        social_enabled=True, character_name="果穗", preset_name="QQ群聊角色扮演",
+        social_enabled=True, character_name="静流", preset_name="QQ群聊角色扮演",
     )
     st4 = participation._get(conv4)
     st4.wake_at = time.time() + 600
     st4.wait_at = time.time() + 300
-    participation.feed(push(conv4, "5", "戊", "@果穗 看我看我"), is_at_bot=True)
+    participation.feed(push(conv4, "5", "戊", "@静流 看我看我"), is_at_bot=True)
     assert st4.wake_at == 0.0 and st4.wait_at == 0.0
     await asyncio.sleep(9)  # let the scheduled @ turn (stubbed) run out
     ok += 1
