@@ -273,7 +273,10 @@ async function handleGenerate(req, res) {
             chatHistory: chat_history,
             userMessage: user_message,
             userName: user_name,
-            options: { qqChatBehavior: qq_chat_behavior },
+            options: {
+                qqChatBehavior: qq_chat_behavior,
+                postHistory: body.post_history_instructions || '',
+            },
         });
 
         // --- 4. Assemble generate payload ---

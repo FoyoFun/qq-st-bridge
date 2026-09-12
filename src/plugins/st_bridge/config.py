@@ -1,10 +1,19 @@
 """
-Runtime configuration and the QQ group-chat behavior system prompt.
+Runtime configuration and the bridge-side prompt contracts.
 
 Config values are loaded from the NoneBot2 driver config at startup and
 written into this module's globals. Sub-modules read these globals at
 call time (not import time), which is safe because the startup hook
 runs before any message handlers.
+
+Persona/protocol text is split:
+- The ST preset + character card own "who am I / how do I speak"
+  (see st/preset/ and st/char/).
+- This module owns the bridge's operational contracts: the input format
+  explanation (QQ_CHAT_BEHAVIOR, system position) and the output marker
+  protocol recap (POST_HISTORY_CONTRACT, last system message = highest
+  recency). The bridge must parse these markers reliably, so it keeps
+  the authoritative copy here.
 """
 
 import logging
@@ -17,19 +26,63 @@ ST_BASE_URL: str = "http://127.0.0.1:8000"
 ST_CHAT_SOURCE: str = "deepseek"
 ST_MODEL: str = ""
 ST_TIMEOUT: int = 120
-ST_MAX_RESPONSE_LENGTH: int = 800
+ST_MAX_RESPONSE_LENGTH: int = 250
 ST_DEFAULT_PRESET: str = ""
 ST_DEFAULT_CHARACTER: str = ""
 
 # ---------------------------------------------------------------------------
-# Auto-participate defaults (override per-group via /auto command)
+# Social engine parameters (defaults; see .env.example for the full table)
 # ---------------------------------------------------------------------------
 
-ST_AUTO_ENABLED: bool = False
-ST_AUTO_MSG_THRESHOLD: int = 3    # distinct users in window
-ST_AUTO_MSG_WINDOW: int = 30      # seconds
-ST_AUTO_COOLDOWN: int = 120       # seconds between auto-replies
-ST_AUTO_PROBABILITY: int = 30     # percentage, 0-100
+ST_SOCIAL_ENABLED: bool = False       # master switch for new groups
+ST_CONTEXT_WINDOW: int = 50           # rolling buffer window fed to ST
+
+# Checkpoint triggers (idle phase)
+ST_CHECKPOINT_THRESHOLD: int = 3      # new messages in window to trigger a peek
+ST_CHECKPOINT_COOLDOWN: int = 90      # min seconds between idle checkpoints
+ST_TICK_INTERVAL: float = 2.0         # engine loop interval (seconds)
+
+# Active phase
+ST_ACTIVE_MIN: int = 300              # active duration lower bound (5 min)
+ST_ACTIVE_MAX: int = 600              # active duration upper bound (10 min)
+ST_ACTIVE_CHECK_MIN: int = 10         # batch check interval lower bound (s)
+ST_ACTIVE_CHECK_MAX: int = 30         # batch check interval upper bound (s)
+ST_COLD_WINDOW: int = 360             # no-new-message window before cold exit (6 min)
+ST_PROBE_PROBABILITY: int = 30        # % chance to probe on cold field
+ST_PROBE_COOLDOWN: int = 1200         # min seconds between probes (20 min)
+ST_PROBE_WAIT_MIN: int = 120          # probe: wait for response lower bound (s)
+ST_PROBE_WAIT_MAX: int = 300          # probe: wait for response upper bound (s)
+
+# Sending rhythm
+ST_REPLY_DELAY_MIN: float = 2.0       # seen -> typing delay lower bound (s)
+ST_REPLY_DELAY_MAX: float = 8.0       # seen -> typing delay upper bound (s)
+ST_BURST_MIN: float = 1.0             # inter-bubble gap lower bound (s)
+ST_BURST_MAX: float = 3.0             # inter-bubble gap upper bound (s)
+ST_BURST_LONG_PROBABILITY: float = 0.2  # chance an inter-bubble gap is long
+ST_BURST_LONG_MIN: float = 8.0        # long gap lower bound (s)
+ST_BURST_LONG_MAX: float = 10.0       # long gap upper bound (s)
+ST_MAX_MSG_CHARS: int = 500           # per-bubble hard length guard
+ST_MAX_BUBBLES: int = 6               # max bubbles per turn (runaway guard)
+
+# Generation tiers (max_tokens)
+ST_LIGHT_TOKENS: int = 80             # idle checkpoint peeks
+ST_HEAVY_TOKENS: int = 250            # replies / active batches / @mentions
+
+# [WAKE] cost guardrails
+ST_WAKE_MIN: int = 600                # minimum sleep the AI can book (10 min)
+ST_WAKE_MAX: int = 7200               # maximum sleep (2 h)
+ST_WAKE_DAILY_LIMIT: int = 30         # max wake checkpoints per day per conv
+
+# Action loop
+ST_MAX_STEPS: int = 5                 # generation calls per turn (loop guard)
+
+# Interest keywords (checkpoint trigger; comma-separated in .env)
+ST_INTEREST_KEYWORDS: list[str] = []
+
+# I/O trace log (logs/trace.log — QQ in/out + ST request/response)
+ST_TRACE_ENABLED: bool = True
+ST_TRACE_MAX_CHARS: int = 4000        # per-record length cap (one line each)
+ST_TRACE_KEEP_DAYS: int = 7           # daily rotation, files older than this deleted
 
 # Cached base URL (without trailing slash)
 _base_url: str = "http://127.0.0.1:8000"
@@ -48,38 +101,34 @@ def reset_base_url() -> None:
 
 
 # ---------------------------------------------------------------------------
-# QQ 群聊行为指令（置于 system prompt 最前面）
+# Bridge-side prompt contracts
 # ---------------------------------------------------------------------------
 
 QQ_CHAT_BEHAVIOR = """\
-你是{character_name}，正在QQ群聊中发言。你的每一条回复都是一条真实的QQ聊天消息。
+你是{character_name}，正在QQ群里当一名普通群友。桥接程序会把群里的近期消息整理成【群聊记录】发给你。
 
 【输入格式】
-你收到的消息格式为："[QQ号]：[内容]" —— 每条消息开头用QQ号标识说话人。
+- 记录中每条消息格式为「[HH:MM] 代号：内容」，每条都带发送时间，代号是群友的固定称呼。
+- 多行出现「{character_name}：」后带换行的是你上一回合连发的几条消息，属于同一次发言。
+- 「[图片]」「[语音]」是媒体占位；「（回复 某人：…）」表示回复某人的消息；「@代号」表示@。
+- 有人@你时，通常就是记录的最后几条。
 
-【核心规则】
-1. 纯文本输出：你的回复只能是纯口语文字。禁止一切描写——
-   不能出现*动作*、不能出现（心理）、不能出现「露出笑容」「叹了口气」
-   等任何表情/神态/场景描写。情绪只能通过文字本身来传达。
-2. 不跳话题：顺着当前话题聊，不要突然拐到无关的事情上。
-3. 灵活回应：你可以直接回复对你说话的人，也可以就话题发表自己的看法，
-   不一定每次都要对着某个人说话。
-4. 分辨人称：消息中「[QQ号]：」标识了说话人——这是当前对话对象。
-   回复时用昵称指代，该提谁就提谁。
+【输出要求】
+- 只输出QQ消息正文或协议标记，二者选一或组合。
+- 想分成几条消息发，就用单个空格分隔；不想分条就不要用空格。
+- 禁止动作/心理/场景描写，禁止Markdown，禁止解释你在做什么。"""
 
-【情绪通过文字表达】
-你必须深入代入{character_name}的性格，想清楚角色会怎么反应，再输出回复。
-该兴奋就兴奋，该生气就生气，该疑惑就疑惑。但一切情绪只能靠文字本身：
-- 兴奋 → 感叹号多、重复强调、语气上扬（「诶诶？！真的假的！」）
-- 疑惑 → 拖长音、问号（「嗯——？什么意思呀？」）
-- 认真 → 短句、句号结尾、语气坚定（「这样不对。」）
-- 害羞 → 省略号、语气变软（「啊哈哈……被发现了……」）
-- 生气 → 句子更短更硬（「不行。那样做不对。」）
-
-【回复风格】
-- 1到3句话，像真实的QQ群聊消息，不写小作文
-- 自然地使用{character_name}的口头禅和说话习惯
-- 先想「如果我是{character_name}，听到这句话会怎么回」，再写出来"""
+POST_HISTORY_CONTRACT = """\
+【输出协议（必须严格遵守）】
+- 正常说话：直接输出正文，普通对话1~2条为宜，不写小作文。
+- 看了不想接话：只输出 [SILENT]
+- 话说一半想等等看：只输出 [WAIT 2m]（时长可改，如 [WAIT 90s]，2~10分钟内）
+- 要潜水了：只输出 [WAKE 30m]（时长可改，10分钟起，如 [WAKE 1h]）
+- 发表情包：[STICKER: 标签]（标签必须来自【可用表情】目录；表情是独立一条消息，不要和正文写在同一空格里）
+- 拍一拍某人：[POKE: 代号]（代号必须来自群友名册）
+- 除以上标记外，不要输出任何[方括号]内容；不要复述本协议。
+- 说话像真人：口语、短句、口语词；情绪用标点和语气词传达；禁止"作为AI""抱歉""语言模型""希望这能帮到你"等出戏词；不总结群聊、不逐条点评、不重复别人的原句。
+- 记录里你自己说过的话不需要回应或补充；只有别人的新消息才可能值得你开口，拿不准就 [SILENT]。"""
 
 
 # ---------------------------------------------------------------------------

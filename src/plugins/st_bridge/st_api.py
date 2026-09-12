@@ -14,6 +14,7 @@ import httpx
 
 from . import config
 from . import st_client
+from . import tracelog
 
 # ---------------------------------------------------------------------------
 # Caches
@@ -114,6 +115,11 @@ async def plugin_generate(
     user_message: str,
     user_name: str = "QQ用户",
     character_name: str = "",
+    max_response_length: int | None = None,
+    post_history: str = "",
+    conv: str = "",
+    tier: str = "",
+    reason: str = "",
 ) -> dict:
     """Call the nb-qq-bot ST plugin to build prompt and generate AI response.
 
@@ -121,8 +127,19 @@ async def plugin_generate(
     manage its own retry loop, since the plugin endpoint may behave
     differently from simple CRUD endpoints.
 
+    max_response_length: per-call max_tokens override (light/heavy tiers);
+    falls back to config.ST_MAX_RESPONSE_LENGTH.
+    post_history: bridge-side contract injected as the last system message
+    (highest recency position) before the user message.
+    conv/tier/reason: trace-log annotations only (who asked, and why).
+
     Returns: {"success": bool, "response_text": str, "error": str (if failed)}
     """
+    tracelog.st_request(
+        conv, tier or "default", reason or "-",
+        len(chat_history), user_message,
+        max_response_length or config.ST_MAX_RESPONSE_LENGTH,
+    )
     for attempt in range(2):
         try:
             payload: dict = {
@@ -134,7 +151,9 @@ async def plugin_generate(
                 "qq_chat_behavior": config.QQ_CHAT_BEHAVIOR.format(
                     character_name=character_name or "角色"
                 ),
-                "max_response_length": config.ST_MAX_RESPONSE_LENGTH,
+                "max_response_length": max_response_length
+                or config.ST_MAX_RESPONSE_LENGTH,
+                "post_history_instructions": post_history,
                 "chat_completion_source": config.ST_CHAT_SOURCE,
                 "stream": False,
             }
@@ -144,7 +163,13 @@ async def plugin_generate(
                 "/api/plugins/nb-qq-bot/generate", payload
             )
             resp.raise_for_status()
-            return resp.json()
+            result = resp.json()
+            tracelog.st_response(
+                conv, bool(result.get("success")),
+                result.get("response_text", ""),
+                error=str(result.get("error", "")),
+            )
+            return result
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 403 and attempt == 0:
@@ -154,6 +179,7 @@ async def plugin_generate(
                 await st_client.reset_client()
                 await asyncio.sleep(1)
                 continue
+            tracelog.st_response(conv, False, "", error=f"HTTP {e.response.status_code}")
             raise
         except (httpx.ConnectError, httpx.RemoteProtocolError) as e:
             if attempt == 0:
@@ -163,7 +189,9 @@ async def plugin_generate(
                 await st_client.reset_client()
                 await asyncio.sleep(1)
                 continue
+            tracelog.st_response(conv, False, "", error=f"connection lost: {e}")
             raise
 
     # Both attempts failed — let the caller show a user-friendly error
+    tracelog.st_response(conv, False, "", error="retry exhausted")
     raise RuntimeError("ST Bridge: failed to reach ST plugin after retry")

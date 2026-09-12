@@ -1,54 +1,80 @@
 # qq-st-bridge
 
-将 QQ 群聊与 **SillyTavern AI 角色** 连接的机器人。  
-在群里 @机器人，即可与 SillyTavern 中的 AI 角色实时对话。
+将 QQ 群聊与 **SillyTavern AI 角色**连接的机器人。
+
+不只是 @机器人 问答——内置**社交引擎**，让 AI 角色像一个真实的群友一样参与群聊：
+平时潜水观望，群里热闹时冒泡接话，聊 high 了连续回复，冷场了自然退场，还可以发表情包、拍人。
 
 ## 架构
 
 ```
-QQ 群成员 @机器人 "你好"
-  │
-  ▼
-NapCat (OneBot V11 客户端) ──WebSocket──▶ NoneBot2 (Python)
-                                                   │
-                                                   │ POST /api/plugins/nb-qq-bot/generate
-                                                   ▼
-                                         SillyTavern 服务端
-                                         ┌──────────────────────┐
-                                         │ nb-qq-bot 插件       │
-                                         │  → 加载角色卡         │
-                                         │  → 加载预设参数       │
-                                         │  → 构建完整 Prompt    │
-                                         │  → 调用 AI 后端       │
-                                         └──────┬───────────────┘
-                                                │ AI 回复
-                                                ▼
-                                          QQ 群收到 AI 消息
+┌────────────────────────── QQ 侧 ───────────────────────────┐
+│   NapCat (OneBot v11) ◄──WebSocket──► NoneBot2 (bot.py)     │
+└───────────────┬─────────────────────────────────────────────┘
+                │ 全量群消息 / 私聊 / @事件 / 戳一拍
+                ▼
+┌────────────────── 桥接层（身体 · 行为）──────────────────────┐
+│ ① 消息收集器   归一化 → 清洁代号 → 写入滚动缓冲               │
+│ ② 参与引擎     观望/活跃/试探/退场状态机 + 检查点触发          │
+│ ③ 上下文构建器 逐条时间戳的记录 + 气氛观察 + 群友名册 + 表情库 │
+│ ④ 动作循环     调 ST → 解析协议标记 → 执行（轻量/重量两档）   │
+│ ⑤ 发送器       空格分条 → 随机延迟 → 表情 / 拍一拍            │
+│ ⑥ 状态存储     代号名册 / 表情目录 / 状态机快照（本地 JSON）   │
+└───────────────┬─────────────────────────────────────────────┘
+                │ HTTP POST /generate（唯一入口，ST 无感知）
+                ▼
+┌────────────────── 人格层（大脑 · ST 不动架构）────────────────┐
+│   nb-qq-bot 插件：角色卡 + 预设 → messages → 模型             │
+│   输出：正文（空格 = 分条）/ 协议标记                          │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**关键设计**：Prompt 构建由 SillyTavern 服务端插件（`st/plugins/nb-qq-bot/`）完成，复用 ST 本身的角色卡、预设模板和 AI 后端配置，保证回复质量与 ST 网页版一致。Python 端只做消息转发和群聊管理。
+职责一句话：**ST 回答"我是谁、怎么说"，桥接回答"何时看、说不说、怎么发"**。
+ST 侧只放文本内容（预设 + 角色卡），所有行为逻辑都在 Python 桥接层。
+
+## 社交引擎
+
+| 阶段 | 行为 |
+|------|------|
+| **观望** | 每条消息零成本收集；被 @ / 攒够 N 条消息 / 命中兴趣关键词时才"看一眼"（轻量生成） |
+| **活跃** | 她开口说话后注意力有惯性：每 10~30 秒批量看新消息并回复；5~10 分钟后自然收尾退场 |
+| **试探** | 冷场时有概率主动说一句试探，2~5 分钟无人回应就安静回观望 |
+| **退场** | 说一句"我先潜了"，回观望潜水 |
+
+模型通过输出协议标记控制行为，桥接解析执行：
+
+| 标记 | 含义 | 桥接动作 |
+|------|------|---------|
+| 正文（空格分条） | 说话 | 拆条 → 2~8s 打字延迟 → 条间 1~3s → 发送 |
+| `[SILENT]` | 看了，不接话 | 无动作 |
+| `[WAIT 2m]` | 话说一半，等等看 | 定时后重新触发检查点 |
+| `[WAKE 30m]` | 潜水，晚点叫我 | 预约定时器（最小 10 分钟，每日上限） |
+| `[STICKER: 标签]` | 发表情包 | 查目录 → 独立图片气泡 |
+| `[POKE: 代号]` | 拍一拍 | OneBot `group_poke` |
+
+防自言自语：她自己的发言合并为单条记录回写缓冲，且引擎全链路过滤自己的消息——她永远不会被自己触发。
 
 ## 项目结构
 
 ```
 qq-st-bridge/
-├── bot.py                       # NoneBot2 入口
-├── pyproject.toml               # 项目元数据 & 依赖
-├── .env.example                 # 配置模板（复制为 .env 后填写）
-├── README.md                    # 本文件
-│
-├── src/plugins/
-│   └── st_bridge.py             # QQ ↔ ST 桥接核心逻辑
-│
-├── st/char/                     # 示例角色卡（可导入 ST 使用）
-│   └── 小宫果穗.json
-├── st/preset/                   # 示例预设（可导入 ST 使用）
-│   └── QQ群聊角色扮演.json
-│
-└── st/plugins/nb-qq-bot/        # SillyTavern 服务端插件
-    ├── index.js                 #   插件入口 & HTTP 编排
-    ├── prompt-builder.js        #   Prompt 构建器
-    └── README.md                #   插件文档
+├── bot.py                        # NoneBot2 入口
+├── .env.example                  # 配置模板（社交引擎全参数带注释）
+├── src/plugins/st_bridge/        # 桥接插件（Python）
+│   ├── collector.py              #   消息收集器（分段解析 + 滚动缓冲）
+│   ├── participation.py          #   参与引擎（状态机 + 定时器）
+│   ├── context_builder.py        #   上下文构建器（时间戳 + 气氛观察）
+│   ├── action_loop.py            #   动作循环（调 ST + 标记解析）
+│   ├── sender.py                 #   发送器（分条 + 延迟 + 表情/拍一拍）
+│   ├── aliases.py                #   清洁代号 + 印象名册
+│   ├── stickers.py               #   表情包目录
+│   ├── tracelog.py               #   全链路 trace 日志（logs/trace.log）
+│   └── ...                       #   config/state/st_api/handlers 等
+├── st/plugins/nb-qq-bot/         # SillyTavern 服务端插件（JS）
+├── st/char/ st/preset/           # 示例角色卡与预设
+├── tests/test_social_engine.py   # 闭环测试（无需 QQ / ST，假数据跑通全链）
+├── scripts/deploy_st.py          # 一键部署插件/预设/角色卡到本地 ST
+└── CLAUDE.md                     # 开发者深入文档（架构细节/坑/参数）
 ```
 
 ## 前置依赖
@@ -57,37 +83,19 @@ qq-st-bridge/
 |------|------|
 | **SillyTavern** | AI 角色聊天前端，需已部署并运行 |
 | **NapCat**（或其他 OneBot V11 客户端） | QQ 机器人客户端 |
-| **Python ≥ 3.9** | 运行 qq-st-bridge |
-| **Node.js ≥ 18** | 运行 SillyTavern（内置 fetch） |
+| **Python ≥ 3.10** | 运行 qq-st-bridge |
+| **Node.js ≥ 18** | 运行 SillyTavern |
 
-## 示例角色与预设
-
-`st/` 目录下提供了可直接导入 SillyTavern 使用的示例文件：
-
-| 文件 | 说明 |
-|------|------|
-| `st/char/小宫果穗.json` | 角色卡 — 元气小学生偶像，适合测试 QQ 群聊场景 |
-| `st/preset/QQ群聊角色扮演.json` | 预设 — 针对 QQ 群聊优化的角色扮演参数，回复简洁（250 token），符合聊天氛围 |
-
-将角色卡和预设文件分别导入到 SillyTavern 的 `data/default-user/` 对应目录即可使用。
-
----
-
-> 本项目由 AI 生成。
-
-
-## 安装与配置
+## 快速开始
 
 ### 1. 部署 SillyTavern 插件
 
-将本项目中的 `st/plugins/nb-qq-bot/` 目录**复制或链接**到你的 SillyTavern 插件目录：
-
 ```bash
-# 方式一：直接复制
+# 方式一：复制
 cp -r st/plugins/nb-qq-bot /path/to/SillyTavern/plugins/
 
-# 方式二：符号链接（Windows 需要管理员终端）
-mklink /D D:\TempFiles\SillyTavern\plugins\nb-qq-bot D:\Projects\qq-st-bridge\st\plugins\nb-qq-bot
+# 方式二：本仓库脚本（同时部署预设和角色卡，Windows 本机 ST 用）
+python scripts/deploy_st.py <你的SillyTavern路径>
 ```
 
 确保 SillyTavern 的 `config.yaml` 中启用了服务端插件：
@@ -99,114 +107,52 @@ enableServerPlugins: true
 ### 2. 配置机器人
 
 ```bash
-# 复制配置模板
-cp .env.example .env
+cp .env.example .env   # 按注释填写；社交引擎参数均有默认值
 ```
 
-编辑 `.env` 文件，各配置项说明：
+关键配置：`ST_BASE_URL`（ST 地址）、`ST_CHAT_SOURCE`（AI 后端，对应 ST 连接配置）、
+`ST_SOCIAL_ENABLED`（社交引擎总开关）。完整参数表见 `.env.example`。
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `HOST` | 机器人监听地址 | `127.0.0.1` |
-| `PORT` | 机器人监听端口 | `8080` |
-| `SUPERUSERS` | 管理员 QQ 号列表 | `[]` |
-| `NICKNAME` | 机器人昵称，群内 @ 时也可用此名 | `["bot"]` |
-| `ST_BASE_URL` | SillyTavern 服务地址 | `http://127.0.0.1:8000` |
-| `ST_CHAT_SOURCE` | AI 后端名称（对应 ST 连接配置） | `deepseek` |
-| `ST_TIMEOUT` | 请求超时时间（秒） | `120` |
-| `ST_MAX_RESPONSE_LENGTH` | AI 回复最大长度 | `800` |
-| `ST_DEFAULT_CHARACTER` | 默认角色（留空则首次使用时选择） | — |
-| `ST_DEFAULT_PRESET` | 默认预设（留空则使用 ST 默认预设） | — |
-
-### 3. 安装 Python 依赖
-
-```bash
-pip install nonebot2 nonebot-adapter-onebot httpx
-```
-
-### 4. 启动
-
-确保 SillyTavern 已运行，然后启动机器人：
+### 3. 启动
 
 ```bash
 # 终端 1：先启动 SillyTavern
-cd /path/to/SillyTavern
-node server.js
+cd /path/to/SillyTavern && node server.js
 
-# 终端 2：再启动 qq-st-bridge
-cd /path/to/qq-st-bridge
+# 终端 2：再启动 qq-st-bridge（NapCat 需已启动并指向 PORT）
 python bot.py
 ```
 
-> **注意**：本项目依赖 NapCat 或其他 OneBot V11 客户端连接 QQ，需单独启动并配置好 WebSocket 地址。`PORT` 配置需与客户端的 WebSocket 端口一致。
-
 ## 使用方法
 
-在 QQ 群中 @机器人 或使用机器人昵称触发：
-
 ```
-@bot /help      查看所有命令
-@bot /chars     列出 SillyTavern 中所有角色
-@bot /presets   列出所有预设
-@bot /char XX   选择角色（如：/char 小宫果穗）
-@bot /preset XX 选择预设（如：/preset deepseek-rp）
-@bot /newchat   清除对话历史，开始新对话
-@bot /clear     清空当前对话上下文
-@bot /status    查看当前绑定的角色和预设
-@bot <消息>     与 AI 角色对话
+@bot /char 小宫果穗        选择角色
+@bot /preset QQ群聊角色扮演 选择预设
+@bot /social on            开启社交引擎（像群友一样自发参与）
+@bot /status               查看绑定与状态机阶段
+@bot /help                 全部命令
+回复一张图片 + /sticker 开心 高兴时用     添加表情包
+/note 阿伟 群里最懂游戏的   给群友的代号写印象备注
 ```
 
-> **提示**：`/char` 和 `/preset` 每个群独立设置，不同群可以使用不同的角色和预设。
+开启社交引擎后，她会自己观察群里聊什么、决定要不要接话；@她 则必定回应。
+每个群独立绑定角色/预设，也可单独开关社交引擎。
 
-## 工作流程
+## 自检测试
 
-1. **QQ 消息** → 群成员 @机器人发送消息
-2. **NoneBot2** → 收到 OneBot 事件，提取消息文本
-3. **消息格式转换** → 将 QQ 号作为稳定发言者标识：`{QQ号}：{消息内容}`
-4. **请求 ST 插件** → `POST /api/plugins/nb-qq-bot/generate`，携带角色、预设、聊天历史
-5. **ST 插件处理** →
-   - 加载角色卡（system prompt、性格、示例对话等）
-   - 加载预设模板（main prompt、jailbreak、生成参数）
-   - 从 ST 连接配置解析当前模型
-   - 构建完整 OpenAI-format messages 数组
-   - 调用 AI 后端生成回复
-6. **响应转换** → AI 回复中的 QQ 号自动替换回群昵称
-7. **发送到群** → 机器人将 AI 回复发送到 QQ 群
+不依赖 QQ 和 ST，用假数据跑通「收集 → 触发 → 生成解析 → 发送」全链路：
 
-## 消息格式
-
-发送给 AI 的消息格式为：
-
-```
-{QQ号}：{消息内容}
+```bash
+python tests/test_social_engine.py
 ```
 
-例如：`123456789：你好`
+## 致谢（Acknowledgements）
 
-这样设计的原因：
-- QQ 号是稳定唯一标识，不受群昵称频繁变化的影响
-- 避免奇怪的特殊字符或群名干扰 AI 对发言者的理解
-- AI 回复中如出现 QQ 号，会自动替换回该用户在群中的昵称
+- [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge) —— 本项目的社交引擎
+  （观望/活跃/试探/退场状态机、检查点触发、空格分条发送、读空气思路）在设计上
+  参考了该项目，受益匪浅。qq-st-bridge 为全新实现（Python + SillyTavern 插件架构），
+  未使用其源代码。
 
-## 关于 ST 插件
+## 许可
 
-`st/plugins/nb-qq-bot/` 是本项目配套的 SillyTavern 服务端插件，它：
-
-- 不依赖 ST 前端代码（独立于 `public/scripts/`）
-- 不 import ST 的 `src/` 内部模块
-- 完整读取角色卡和预设数据，构建与 ST 网页版一致的 prompt
-- 使用 CommonJS 格式，兼容 ST 的插件加载器
-
-详见 `st/plugins/nb-qq-bot/README.md`。
-
-## 依赖清单
-
-**Python**
-- nonebot2 ≥ 2.5.0
-- nonebot-adapter-onebot ≥ 2.4.0
-- httpx
-- fastapi + uvicorn（NoneBot2 内置依赖）
-
-**Node.js**
-- Node.js ≥ 18（全局 `fetch`）
-- SillyTavern（含插件系统）
+[MIT](LICENSE)

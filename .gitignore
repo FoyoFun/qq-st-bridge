@@ -12,9 +12,16 @@ venv/
 # IDE
 .vscode/
 .idea/
+.obsidian/
 
-# Data (runtime persisted state)
+# Data (runtime persisted state) — 群绑定、代号名册、表情库、状态机快照
+# 含真实群号/QQ号，绝不入库
 data/
+
+# AI 助手本地配置
+.agents/
+.claude/
+CLAUDE.local.md
 
 # OS
 .DS_Store
@@ -24,3 +31,6 @@ Thumbs.db
 *.txt
 bot_output.log
 
+
+# Runtime logs
+logs/

@@ -2,21 +2,30 @@
 
 ## Overview
 
-A QQ bot built on NoneBot2 that bridges QQ group chat to SillyTavern AI characters.
-When a user @mentions the bot, the message is forwarded to a SillyTavern server plugin,
-which builds the prompt, calls the AI backend (DeepSeek), and returns the response.
+A QQ bot built on NoneBot2 that bridges QQ conversations to SillyTavern AI
+characters with a **social strategy layer**: the character participates in
+group chat like a real member — watching (观望), joining in (活跃), testing
+the waters (试探), and leaving naturally (退场) — instead of only answering
+@mentions.
+
+Division of responsibility: **ST answers "who am I / how do I speak";
+the bridge answers "when to look, whether to speak, how to send."**
+ST side only holds text content (preset + character card); all behavior
+lives in the Python bridge.
 
 ## Architecture & Data Flow
 
 ```
-QQ Group @bot "hello"
-  → OneBot V11 WebSocket → NoneBot2 (Python, this project)
-      → ST Plugin /api/plugins/nb-qq-bot/generate
-        → ST internally: load char + preset → build prompt → call AI
-        ← AI response
-      ← ST Plugin
-    ← OneBot V11 WebSocket
-  ← QQ Group: AI reply
+QQ (NapCat, OneBot v11 WS)
+  → NoneBot2 (this project)
+      → collector      normalize + clean codename + rolling buffer
+      → participation  state machine (idle/active/probing/exiting) + timers
+      → action_loop    build observation → ST → parse markers → dispatch
+          → ST plugin /api/plugins/nb-qq-bot/generate (persona + prompt)
+          ← spoken text + protocol markers ([SILENT]/[WAIT]/[WAKE]/…)
+      → sender         bubble split + random delays + stickers + pokes
+  ← OneBot v11
+← QQ
 ```
 
 ## Key Files
@@ -24,210 +33,194 @@ QQ Group @bot "hello"
 | File | Purpose |
 |------|---------|
 | `bot.py` | Entry point. Inits NoneBot, registers OneBot V11 adapter, loads plugins |
-| `.env` | Bot + ST bridge configuration (host, port, timeout, etc.) |
-| `data/group_states.json` | Persisted group state — character, preset, chat per group (survives restarts) |
-| `pyproject.toml` | Python project metadata, NoneBot adapter config |
+| `.env` | Bot + bridge + social-engine configuration |
+| `data/group_states.json` | Per-conversation binding (character, preset, chat file, social switch) |
+| `data/aliases.json` | QQ号 → 清洁代号 lifetime-stable mapping |
+| `data/impressions.json` | Roster stats + manual impression notes |
+| `data/stickers/catalog.json` | Sticker catalog for [STICKER: tag] |
+| `data/social_states.json` | State-machine snapshots (phase + WAKE/WAIT timers) |
+| `tests/test_social_engine.py` | Closed-loop test (no QQ / no ST needed) |
+| `scripts/deploy_st.py` | Deploy plugin/preset/character into local SillyTavern |
 
-### ST Bridge Plugin Package
+### Bridge Plugin Package (`src/plugins/st_bridge/`)
 
-| File | Purpose |
-|------|---------|
-| `src/plugins/st_bridge/__init__.py` | Plugin entry — imports all sub-modules, lifecycle hooks (on_startup/on_shutdown) |
-| `src/plugins/st_bridge/config.py` | Runtime config from `.env`, system prompt template, truncate() |
-| `src/plugins/st_bridge/st_client.py` | HTTP transport: client singleton, CSRF token, global ST lock, retry logic |
-| `src/plugins/st_bridge/st_api.py` | ST API semantics: characters, presets, chat load/save, plugin_generate() |
-| `src/plugins/st_bridge/state.py` | GroupState dataclass, JSON persistence, QQ↔nickname mapping |
-| `src/plugins/st_bridge/chat_utils.py` | Pure functions for ST JSONL format (filename, header, message, extraction) |
-| `src/plugins/st_bridge/handlers.py` | 7 /command handlers (chars, presets, char, preset, status, newchat, clear) |
-| `src/plugins/st_bridge/chat_handler.py` | @mention handler + all-messages handler — command dispatch + chat flow + auto-participation feeder |
-| `src/plugins/st_bridge/auto_participate.py` | Auto-participation: message buffer, trigger eval (freq+cooldown+probability), auto chat flow |
-| `src/plugins/st_bridge/concurrency.py` | Global ST operation lock — only one ST request at a time (all groups share) |
-
-### ST Server Plugin
-
-| File | Purpose |
-|------|---------|
-| `SillyTavern/plugins/nb-qq-bot/index.js` | Plugin entry — registers `POST /api/plugins/nb-qq-bot/generate` |
-| `SillyTavern/plugins/nb-qq-bot/prompt-builder.js` | Prompt construction — builds OpenAI-format messages from character + preset + history |
-
-## Plugin Architecture (modular, 10 files)
-
-### Module dependency graph (bottom-up, zero circular imports)
+Module dependency graph (bottom-up, no circular imports; participation →
+action_loop is a lazy import inside the function):
 
 ```
-__init__.py ──→ config  concurrency  chat_handler ──→ auto_participate
-                    │                    │                    │
-                st_client ──→ st_api ──→ handlers ──→ state  chat_utils
+__init__.py (lifecycle)
+chat_handler.py ──→ collector ──→ aliases
+      │                │
+      ↓                ↓
+participation ──→ action_loop ──→ context_builder ──→ stickers
+      │               │    │
+      │               │    └→ sender ──→ collector (self-recording)
+      └── (lazy) ─────┘    └→ st_api ──→ st_client ──→ concurrency
+state / chat_utils / config / handlers are leaves
 ```
 
-`auto_participate` depends on `st_api`, `state`, `chat_utils`, `config`. It is NOT imported by any of those — the dependency is one-way. Only `chat_handler` (orchestrator) and `__init__` (loader) import it.
+| Module | Responsibility |
+|--------|----------------|
+| `config.py` | Runtime params from `.env`; bridge-side prompt contracts (QQ_CHAT_BEHAVIOR input format + POST_HISTORY_CONTRACT marker protocol) |
+| `collector.py` | Segment rendering ([图片]/@代号/回复…) → clean codename → rolling buffer (50) |
+| `aliases.py` | Stable codenames derived once from display names; reverse lookup for [POKE]; roster lines |
+| `stickers.py` | Tag→file catalog; add via reply+`/sticker`; fuzzy tag match; catalog digest |
+| `participation.py` | Social state machine; checkpoint triggers (@必看 / N条 / 关键词 / WAKE/WAIT); active batch checks; cold-field probe; duration-cap farewell |
+| `action_loop.py` | One turn: observation → ST (light 80 / heavy 250 tokens) → marker parse → dispatch; ST chat memory save |
+| `sender.py` | Serial send queue; space-split bubbles (CJK boundary); 2~8s reply delay; 1~3s gaps w/ 20% long gap; sticker image bubbles; group_poke |
+| `context_builder.py` | Observation blocks: [HH:MM] time-gap markers + roster + sticker catalog + turn instruction |
+| `state.py` | GroupState persistence keyed by `group:<id>` / `private:<id>` |
+| `tracelog.py` | Full-chain I/O trace (`logs/trace.log`): QQ◀ in / ST▶ request / ST◀ response / QQ▶ out; daily rotation + retention |
+| `st_api.py` / `st_client.py` / `concurrency.py` | ST transport (unchanged from previous design: CSRF, global lock, retry) |
+| `handlers.py` | Commands: /help /chars /presets /char /preset /status /newchat /clear /social /stickers /sticker /note |
+| `chat_handler.py` | Four matchers: @mentions (commands or must-see), all group msgs, private msgs, pokes |
 
-### Module descriptions
+### ST Server Plugin (`st/plugins/nb-qq-bot/`, deployed by `scripts/deploy_st.py`)
 
-1. **config.py** — Runtime config globals loaded from `.env` at startup. `QQ_CHAT_BEHAVIOR` system prompt template. `truncate()` utility.
-2. **concurrency.py** — Global `asyncio.Lock` for ST operations. All groups share one lock: only one ST request in flight at a time (120s timeout). Ensures ST receives no concurrent requests.
-3. **st_client.py** — HTTP transport. `httpx.AsyncClient` singleton. CSRF token management (`_csrf_lock`). Two-layer serialization in `auth_post()`: global ST lock → CSRF lock. `post_with_retry()` auto-retries on 403/connection errors.
-4. **st_api.py** — ST API semantics. Cached character/preset lists. `get_characters()`, `get_presets()`, `get_character()`, `load_chat()`, `save_chat()`, `plugin_generate()`. Uses `st_client.auth_post()` and `st_client.post_with_retry()`.
-5. **state.py** — `GroupState` dataclass (character_name, preset_name, avatar_url, chat_file). `get_group_state()`, `save_group_states()`, `load_group_states()`. QQ↔nickname mapping via `remember_user()` / `replace_qq_with_nickname()`.
-6. **chat_utils.py** — Pure functions for ST JSONL: `new_chat_filename()`, `make_chat_header()`, `make_chat_message()`, `extract_history()`.
-7. **handlers.py** — One async function per /command (chars, presets, char, preset, status, newchat, clear, auto). Each self-contained with error handling. `/auto` uses sub-commands (on|off|status|freq|cooldown|prob) to keep the command surface small.
-8. **chat_handler.py** — Two `on_message` matchers: `handle_at_me` (priority 10, block=True) for @mentions, `handle_all_messages` (priority 20, block=False) feeding the auto-participation buffer. Command dispatch + chat flow orchestrator.
-9. **auto_participate.py** — Auto-participation engine. Per-group `deque` buffer (maxlen 20), trigger evaluation (N distinct users in W seconds + cooldown + probability), summary builder, background auto-chat flow via `bot.send_group_msg()`. All errors logged, never raised — best-effort participation. Depends on `st_api`, `state`, `chat_utils`, `config`; NOT imported by any of those.
-10. **__init__.py** — Imports all sub-modules (triggers handler registration). Lifecycle: `on_startup` loads config/restores state/pre-fetches caches, `on_shutdown` closes HTTP client.
+- `index.js` — `POST /api/plugins/nb-qq-bot/generate`; passes
+  `post_history_instructions` through.
+- `prompt-builder.js` — builds OpenAI messages from **ST-native preset
+  format** (prompts[] + prompt_order, exactly what ST's UI edits) with a
+  legacy flat-field fallback. Order: bridge QQ_CHAT_BEHAVIOR → preset main
+  → char description/personality/scenario → mes_example → first_mes →
+  (history) → post-history (preset jailbreak + bridge contract) → user msg.
 
-### Message Flow (detailed)
+### ST Text Content (source of truth in repo, deployed to ST)
 
-1. QQ group message with @mention arrives via OneBot WebSocket
-2. NoneBot2 auto-strips the @mention, sets `event.to_me = True`
-3. Handler checks: if empty → help; if `/cmd` → route to command; else → chat
-4. Chat flow: load ST chat history → `st_plugin_generate()` → ST plugin loads character + preset, builds full prompt, calls AI → save back to ST → reply to QQ
+- `st/preset/QQ群聊角色扮演.json` — persona/说话规则/该说与不该说/AI味黑名单 +
+  final-output check in Post-History Instructions.
+- `st/char/小宫果穗.json` — mes_example rewritten as pure QQ-chat style
+  (space-split bubbles, [STICKER]/[POKE] examples); scenario set in a QQ group.
+  Deployed by re-embedding the JSON into the character PNG (chara/ccv3 chunks).
 
-### Auto-Participation Flow
+## Marker Protocol (model output side)
 
-1. Every non-@mention group message → `handle_all_messages` handler (priority 20, block=False)
-2. Skips: @mentions (handled by priority 10), bot's own messages, /commands
-3. Calls `auto_participate.feed_message()` → appends to per-group `deque`, cleans expired entries
-4. Trigger check: N distinct users in W seconds? cooldown elapsed? dice roll < P%?
-5. If triggered → clears buffer, builds summary (`QQ号：内容` format), spawns background task
-6. Background task: load ST chat → `plugin_generate("群聊", summary)` → save → `bot.send_group_msg()`
-7. All errors caught and logged — never crashes, never blocks the message handler
+| Marker | Meaning | Bridge action |
+|--------|---------|---------------|
+| plain text (spaces = bubbles) | speak | split → delays → send → enter active |
+| `[SILENT]` | read, not replying | no action, "已读" |
+| `[WAIT 2m]` | wait for more | re-checkpoint timer |
+| `[WAKE 30m]` | go diving | booked timer, back to idle (min 10m, daily cap) |
+| `[STICKER: tag]` | send sticker | catalog lookup → own image bubble |
+| `[POKE: 代号]` | poke someone | OneBot `group_poke` |
 
-### Auto-Participation Configuration
+## Social Engine Timing (defaults, all in .env)
 
-- Defaults in `.env` (`ST_AUTO_ENABLED`, `ST_AUTO_MSG_THRESHOLD`, etc.)
-- Per-group override via `/auto` commands, persisted in `group_states.json`
-- `GroupState` fields: `auto_enabled`, `auto_msg_threshold`, `auto_msg_window`, `auto_cooldown`, `auto_probability`
-- In-memory state (not persisted): message buffer (`deque`), last trigger timestamp
-- `/auto on` enables with current settings; `/auto off` disables; `/auto status` shows config
-
-### User message format
-
-Messages are formatted before sending to AI using QQ numbers as stable identifiers:
 ```
-{QQ号}：{original_text}
+idle:    message → collect (0 cost); @/private → heavy turn; N=3 msgs or
+         keyword → light checkpoint (cooldown 90s)
+active:  batch-check every 10~30s → heavy reply (2~8s delay);
+         exits via 6min cold field (30% probe) or 5~10min duration cap
+         (farewell line) → probing → idle if no response in 2~5min
+sending: first bubble 2~8s; gaps 1~3s, 20% → 8~10s; ≤500 chars/bubble
 ```
-Example: `123456789：你好`
 
-### QQ号 → 昵称 双向映射
+## Self-Message Rules (anti self-trigger, important)
 
-- **发出**: 用 `event.user_id`（QQ号）代替昵称作为发言者标识
-- **返回**: AI 回复中的 QQ 号会自动替换回对应的 QQ 昵称，再发送到群聊
-- 映射存储在全局 `_nickname_map: dict[str, str]` 中，每次收到消息时更新
-- 仅替换已知的 QQ 号，消息原文中的其他名字不受影响
+- Her own reply is recorded into the buffer as **one entry per burst**
+  (all bubbles joined with `\n`), written by the sender after the LAST
+  bubble is sent — the model sees her turn as a single unit.
+- Every trigger/counting path (`feed` idle threshold, `_tick_active`
+  batch, `record_result` watermark) goes through
+  `participation._fresh_from_others`, which **excludes `is_self`** —
+  her own messages can never wake the engine.
+- The consumption watermark (`last_msg_ts`) is anchored on the last
+  message from OTHERS and never rewinds, so asynchronously recorded
+  self-bubbles cannot mark groupie messages as seen.
 
-### SillyTavern API endpoints used
+## Observation Format
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/csrf-token` | GET | CSRF token + session cookie |
-| `/api/characters/all` | POST | List all characters |
-| `/api/characters/get` | POST | Get character card data |
-| `/api/settings/get` | POST | List presets (openai_setting_names + contents) |
-| `/api/chats/get` | POST | Load chat history (JSONL) |
-| `/api/chats/save` | POST | Save chat history |
-| `/api/plugins/nb-qq-bot/generate` | POST | **Main call** — build prompt + generate AI response in one request |
+- Every record line carries its own `[HH:MM]` stamp:
+  `[14:32] 阿伟：今天好累` — pace and pauses are visible per message.
+- A computed **【气氛观察】** block (读空气 signals) is injected before
+  the turn instruction: 10-min message density + speaker count, who
+  spoke last (with "话像没说完" heuristic from `looks_unfinished`),
+  how long since her own last line and whether anyone replied after it,
+  and whether anyone @'d her. Facts only — the judgment stays with the
+  model. The preset adds a 【读空气】 section teaching when to speak
+  and when staying silent is the right move.
 
-### SillyTavern CSRF flow
+## Gotchas & Pitfalls
 
-ST uses `csrf-sync` which ties CSRF tokens to session cookies. The `httpx.AsyncClient` handles cookies automatically:
-1. `GET /csrf-token` → ST sets session cookie in response, returns token
-2. `POST /api/...` with `X-CSRF-Token` header + cookie from step 1
-3. Always fetch fresh token before each POST
-
-## External Services
+1. **FinishedException**: NoneBot flow control — never swallow it; add
+   `except FinishedException: raise` before `except Exception`.
+2. **CSRF token**: fetched fresh per POST, serialized by `_csrf_lock`;
+   403/connection errors auto-reset the client and retry once.
+3. **Global ST lock** (`concurrency.py`): one ST request in flight across
+   all conversations; per-conversation turn lock lives in
+   `participation.lock_for`.
+4. **Model names**: model comes from ST's connection settings (read by the
+   plugin), not the preset or `.env`.
+5. **ST plugins must be enabled**: `config.yaml` needs `enableServerPlugins: true`.
+6. **Preset format**: the plugin reads the ST-native `prompts[]` +
+   `prompt_order` — edit the preset in ST's UI or edit the repo JSON and
+   run `python scripts/deploy_st.py`. Flat `prompt`/`jailbreak_prompt`
+   fields only apply when no prompt_order exists.
+7. **Character card**: repo JSON is source of truth; deploy re-embeds it
+   into the PNG (updates `chara` v2 + `ccv3` tEXt chunks).
+8. **Codename stability**: `aliases.get_alias` freezes the codename on
+   first sight; later nickname changes do NOT rewrite it.
+9. **Self-recording**: the sender writes every sent bubble back into the
+   collector buffer, so the model sees its own recent utterances.
+10. **No running loop**: `participation.schedule_turn` needs a running
+    asyncio loop — only call `feed()` from async handlers.
+11. **Chat history trim**: action_loop sends the last 80 ST history
+    entries per generation; observation records come from the rolling
+    buffer, old topics fade naturally.
 
 ## Common Operations
 
 ### Start everything
 ```bash
 # 1. SillyTavern
-cd <SillyTavern-path> && node server.js &
+cd /d/TempFiles/SillyTavern && node server.js
 
 # 2. Bot
-cd <project-path> && python bot.py &
+cd /d/Projects/python/qq-st-bridge && python bot.py
 ```
 
-### Restart bot after code changes
+### Deploy ST-side changes (plugin / preset / character card)
 ```bash
-# Stop the background task, then restart
-cd <project-path> && python bot.py &
+python scripts/deploy_st.py            # defaults to D:/TempFiles/SillyTavern
+# restart SillyTavern afterwards so the plugin code reloads
 ```
 
-### Run tests
+### Run closed-loop tests (no QQ / no ST needed)
 ```bash
-# Test ST API connectivity
-python -c "
-import httpx, asyncio
-async def test():
-    client = httpx.AsyncClient()
-    r = await client.get('http://127.0.0.1:8000/csrf-token')
-    print('CSRF:', r.json()['token'][:20])
-    await client.aclose()
-asyncio.run(test())
-"
+python tests/test_social_engine.py     # 10 sections, ~40s (delay windows)
 ```
 
-## Gotchas & Pitfalls
+### Logs
 
-1. **FinishedException**: `at_me.finish()` raises `FinishedException` (NoneBot2's normal flow control). NEVER catch it in try/except blocks — always add `except FinishedException: raise` before `except Exception`.
+| File | Contents | Retention |
+|------|----------|-----------|
+| `logs/bot.log` | Operational log (engine transitions, sends, errors) — loguru sink | 5 MB x 3 rotation |
+| `logs/trace.log` | Full I/O trace, one line per item: `QQ◀` inbound, `ST▶` ST request (full observation), `ST◀` raw model output, `QQ▶` outbound bubble/sticker/poke (incl. failures). Doubles as replay material for fake-data tests | daily rotation, keeps `ST_TRACE_KEEP_DAYS` (default 7) |
 
-2. **CSRF token**: Must be fresh for each POST. The session cookie is handled by httpx's cookie jar automatically. On 403 (CSRF rejection) or connection errors, the client auto-resets its session and retries once.
+Watch live: `tail -f logs/trace.log`. Toggle/cap via `.env`: `ST_TRACE_ENABLED` / `ST_TRACE_MAX_CHARS` / `ST_TRACE_KEEP_DAYS`.
 
-3. **Global ST lock**: All ST operations go through a single `asyncio.Lock` in `concurrency.py` (via `st_client.auth_post()`). Only one ST request is in flight at a time across all groups. Lock timeout is 120s. If ST is busy, simultaneous requests queue up naturally; the caller gets a timeout error if the wait exceeds 120s.
+### Configure the engine per group
+```
+@bot /social on        # enable the social engine for this group
+@bot /social keywords 偶像,游戏   # per-group interest keywords
+@bot /status           # binding + state-machine phase + WAKE booking
+reply to an image + /sticker 标签 [备注]   # add a sticker
+/note 代号 印象文字     # roster impression note
+```
 
-4. **Model names**: Model is configured in the ST preset (not in `.env`). The `ST_MODEL` field is deprecated and should be left empty. Valid DeepSeek models: `deepseek-v4-flash`, `deepseek-v4-pro`.
+## Version History (this refactor)
 
-5. **ST plugins must be enabled**: `config.yaml` needs `enableServerPlugins: true` for the nb-qq-bot plugin to load.
-
-6. **ST whitelist**: SillyTavern's default config only allows `127.0.0.1` and `::1`. If moving to remote, update `config.yaml` whitelist.
-
-7. **Chat history format**: ST uses JSONL (one JSON per line). First line = header with `chat_metadata`. Subsequent lines = messages with `is_user`, `mes`, `send_date`, `name`.
-
-8. **Character avatar_url**: The `avatar` field from `/api/characters/all` is used as the `avatar_url` parameter for all other character/chat API calls.
-
-9. **Module structure**: The plugin is now a package (`src/plugins/st_bridge/`). When adding new features, add a module and import it from `__init__.py`. Keep the dependency graph bottom-up with no circular imports.
-
-## SillyTavern Plugin (nb-qq-bot)
-
-Located at `<SillyTavern-path>/plugins/nb-qq-bot/`. This is a server-side ST plugin that exposes:
-
-- `POST /api/plugins/nb-qq-bot/generate` — one-shot prompt building + AI generation
-
-The plugin is **independent of ST source code** (no imports from `src/`). It uses its own
-prompt builder that constructs system prompts from character cards, preset templates, and chat history.
-The `plugins/` directory is in ST's `.gitignore`, so this plugin is unaffected by upstream ST updates.
-
-**Plugin internals**:
-1. Receives `avatar_url`, `preset_name`, `chat_history`, `user_message`
-2. Fetches character card via ST's own `/api/characters/get`
-3. Fetches preset/settings via ST's own `/api/settings/get`
-4. Resolves model from ST's connection settings (`data/default-user/OpenAI Settings/*.json` → `{source}_model`)
-5. Builds messages array (system prompt + history + user message)
-6. Calls ST's own `/api/backends/chat-completions/generate`
-7. Returns the AI response
-
-**Model resolution**: The plugin no longer reads model from the preset (`preset.openai_model`).
-Instead, it reads ST's connection profile files to find `{source}_model` (e.g. `deepseek_model`),
-so the model follows whatever is configured in SillyTavern's connection settings.
-
-## Version History
-
-- `31050cc` — Initial commit: bot + st_bridge plugin
-- `aa3d4c2` — Message format: `user对char说，msg`
-- `3ee270e` — docs: README.md and CLAUDE.md
-- `e5e2de3` — Experiment with literal `{{user}}`/`{{char}}` macros (reverted)
-- `b4d5eeb` — Save formatted message to ST chat history
-- `24337fe` — Use actual QQ name + char name (not template macros)
-- `761ef01` — QQ号 as user ID + bidirectional nickname mapping
-- current — Moved prompt building to ST server plugin, removed `build_messages()`/`st_generate()`
-- current — Added group state persistence (`data/group_states.json`), survives bot restarts
-- current — Simplified user message format: `{QQ号}：{msg}` (was `{QQ号}对{char}说，{msg}`)
-- current — Model resolution: read from ST connection settings instead of preset
-- current — Auto-reconnect on CSRF/connection errors: `_reset_client()` + retry logic
-- current — Concurrent-safe CSRF token management via `_csrf_lock` (`asyncio.Lock`)
-- current — Improved error messages: RuntimeError shows user-friendly hint instead of raw type name
-- current — **Modularized**: split 847-line monolith into 10 single-responsibility modules
-- current — **Global ST lock**: all groups share one `asyncio.Lock` — only one ST request at a time
-- current — CSRF lock consolidation: extracted `auth_post()` shared primitive, eliminating ~20 lines of duplicate retry code
-- current — **Auto-participation**: bot spontaneously joins discussions based on frequency + cooldown + probability triggers
-- current — `/auto` command with sub-commands (on|off|status|freq|cooldown|prob) — per-group config persisted
+- **Social engine**: 观望/活跃/试探/退场 state machine replaces the old
+  frequency+probability auto-participation (`auto_participate.py` removed).
+- **Clean codenames**: raw QQ numbers no longer reach the model; stable
+  aliases + impressions roster instead.
+- **Marker protocol**: [SILENT]/[WAIT]/[WAKE]/[STICKER]/[POKE] with
+  light/heavy token tiers (80/250).
+- **Sender**: human-like burst sending (split + delays + long-gap
+  probability), sticker bubbles, pokes; serial queue.
+- **ST plugin**: prompt-builder now consumes the ST-native preset format;
+  bridge contract injected as the last system message.
+- **Preset/character rewritten**: persona + speaking rules + AI-flavor
+  blacklist in the preset; QQ-chat-style mes_example in the card.
+- **Private chat + pokes**: private messages deliver immediately (heavy);
+  group pokes on the bot trigger a response.
