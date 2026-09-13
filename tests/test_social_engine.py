@@ -183,8 +183,27 @@ async def main():  # noqa: C901
     assert r.pokes == ["阿伟", "小红"] and r.text == "拍你一下", r
     r = p("正常聊天 不分条")
     assert r.text == "正常聊天 不分条" and not r.spoke or r.spoke
+    # action-prose defense: silence rendered as prose must never reach QQ
+    r = p("（看了眼群消息，没说话）")
+    assert r.silent and not r.text and not r.spoke, r
+    r = p("（看了看大家，没说话）")
+    assert r.silent and not r.text, r
+    r = p("[SILENT]（看了眼群消息，没说话）")
+    assert r.silent and not r.text, r
+    r = p("*看了看群消息，没有说话*")
+    assert r.silent and not r.text, r
+    r = p("看了眼群消息，没说话。")
+    assert r.silent and not r.text, r
+    # leading action prefix is stripped, speech kept
+    r = p("（看了眼群消息）大家好啊")
+    assert not r.silent and r.text == "大家好啊", r
+    # parenthetical without action hints (or not leading) stays untouched
+    r = p("笑死（不是）")
+    assert r.text == "笑死（不是）", r
+    r = p("（划掉）其实我想说的是这个")
+    assert r.text == "（划掉）其实我想说的是这个", r
     ok += 1
-    print("[6] parse_actions OK: SILENT/WAIT/WAKE/STICKER/POKE + text strip")
+    print("[6] parse_actions OK: SILENT/WAIT/WAKE/STICKER/POKE + text strip + action-prose defense")
 
     # ---- 7. participation: triggers + state machine ----
     action_loop.run_turn = fake_run_turn  # stub external effects

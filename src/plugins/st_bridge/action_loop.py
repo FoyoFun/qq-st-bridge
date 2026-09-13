@@ -38,6 +38,21 @@ _STICKER_RE = re.compile(r"\[\s*STICKER\s*[:：]\s*([^\]]+?)\s*\]", re.IGNORECAS
 _POKE_RE = re.compile(r"\[\s*POKE\s*[:：]\s*([^\]]+?)\s*\]", re.IGNORECASE)
 _MARKER_RES = (_SILENT_RE, _WAIT_RE, _WAKE_RE, _STICKER_RE, _POKE_RE)
 
+# Defense: the model sometimes renders "read but not speaking" as prose
+# (e.g. "（看了眼群消息，没说话）") instead of the [SILENT] marker. Such
+# text must never reach QQ as a spoken bubble.
+_ACTION_ONLY_RE = re.compile(r"(?:[（(][^（）()]{0,50}[)）][\s，,]*)+")
+_ACTION_AST_RE = re.compile(r"\*[^*\n]{0,50}\*")
+# Bare-prose variant without brackets: "看了眼群消息，没说话"
+_SILENCE_PROSE_RE = re.compile(
+    r"^(?:看了[一眼]|瞄[了]?一?眼|扫[了]?一?眼|望[了]?一?眼)?[^。，,]{0,20}[，,]?"
+    r"\s*(?:没有?说话|没吭声|保持沉默)[。~～]*$"
+)
+# Action-ish keywords for stripping a leading "（……）" prefix from real speech
+_ACTION_HINT_RE = re.compile(
+    r"看|瞄|扫|望|笑|叹|点头|摇头|挠|沉默|没说话|不说话|没吭声|走神"
+)
+
 _UNIT_SECONDS = {
     "": 60.0, "s": 1.0, "秒": 1.0,
     "m": 60.0, "分": 60.0, "分钟": 60.0,
@@ -62,6 +77,34 @@ class Actions:
 
 def _to_seconds(num: str, unit: str) -> float:
     return float(num) * _UNIT_SECONDS.get(unit, 60.0)
+
+
+def _sanitize_action_prose(actions: Actions) -> None:
+    """Keep action-description prose from being sent as a spoken bubble.
+
+    Whole-output action text ("（看了眼群消息，没说话）", "*叹气*") is the
+    model's way of saying "read, not replying" -> downgrade to [SILENT].
+    A leading action prefix before real speech ("（看了眼群消息）大家好啊")
+    is stripped instead, keeping the speech.
+    """
+    text = actions.text
+    if not text:
+        return
+    if (_ACTION_ONLY_RE.fullmatch(text) or _ACTION_AST_RE.fullmatch(text)
+            or _SILENCE_PROSE_RE.fullmatch(text.strip())):
+        logging.info(f"ActionLoop: action prose downgraded to silence: {text!r}")
+        actions.silent = True
+        actions.text = ""
+        return
+    stripped = text
+    while True:
+        m = re.match(r"^[（(]([^（）()]{1,24})[)）]\s*", stripped)
+        if not m or not _ACTION_HINT_RE.search(m.group(1)):
+            break
+        stripped = stripped[m.end():]
+    if stripped != text:
+        logging.info(f"ActionLoop: stripped action prefix -> {stripped.strip()!r}")
+        actions.text = stripped.strip()
 
 
 def parse_actions(raw: str) -> Actions:
@@ -90,6 +133,7 @@ def parse_actions(raw: str) -> Actions:
     for pattern in _MARKER_RES:
         text = pattern.sub("", text)
     actions.text = text.strip()
+    _sanitize_action_prose(actions)
     return actions
 
 
@@ -275,7 +319,10 @@ async def _save_exchange(
         user_text = f"【群聊】\n{digest}"[:2000]
         assistant_text = " ".join(p for p in spoken_parts if p).strip()
         if not assistant_text:
-            assistant_text = "（看了眼群消息，没说话）"
+            # Store the marker, never prose: a prose placeholder ("（看了眼
+            # 群消息，没说话）") sat in memory as few-shot and taught the
+            # model to emit that text instead of [SILENT].
+            assistant_text = "[SILENT]"
 
         history = list(history)
         if not any("chat_metadata" in m for m in history):
