@@ -203,6 +203,16 @@ async def _run_turn_locked(conv: str, tier: str, reason: str) -> None:
     if not (gs.character_name and gs.preset_name):
         return
 
+    # Stale re-trigger guard: two quick private/@ messages each schedule a
+    # turn; the second one would run after the first with nothing new to
+    # see and answer the same content all over again.
+    if reason in ("private", "at") and not participation.has_unseen_messages(conv):
+        logging.info(
+            f"ActionLoop: skipped stale {reason} turn on {conv} "
+            f"(nothing new since last observed message)"
+        )
+        return
+
     # Hold the door for a likely continuation before snapshotting context
     wait = continuation_wait_seconds(conv)
     if wait > 0:
@@ -215,6 +225,7 @@ async def _run_turn_locked(conv: str, tier: str, reason: str) -> None:
     observation, digest = context_builder.build_observation(
         conv, gs.character_name, instruction
     )
+    snapshot_newest = participation.newest_other_ts(conv)
     history = _trim_history(await _load_history(gs))
 
     try:
@@ -247,6 +258,10 @@ async def _run_turn_locked(conv: str, tier: str, reason: str) -> None:
             await _send_notice(conv, "（刚刚走神了没听到……再叫我一次？）")
         return
 
+    # The turn answered everything up to the snapshot — stamp the watermark
+    # so a queued duplicate turn for the same messages gets skipped.
+    participation.mark_seen(conv, snapshot_newest)
+
     raw = result.get("response_text", "") or ""
     actions = parse_actions(raw)
     logging.info(
@@ -261,7 +276,7 @@ async def _run_turn_locked(conv: str, tier: str, reason: str) -> None:
 
     if actions.text:
         if sender.is_repeat(conv, actions.text):
-            logging.info(f"ActionLoop: dropped exact repeat of her recent reply on {conv}")
+            logging.info(f"ActionLoop: dropped repeat of her recent reply on {conv}")
             actions.text = ""
         else:
             n = sender.enqueue_text(conv, actions.text, gs.character_name)

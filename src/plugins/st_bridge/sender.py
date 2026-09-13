@@ -12,6 +12,7 @@ the model sees its own utterances next turn.
 """
 
 import asyncio
+import difflib
 import logging
 import random
 import time
@@ -119,21 +120,37 @@ def _normalize(text: str) -> str:
     return "".join((text or "").split())
 
 
-def is_repeat(conv: str, text: str) -> bool:
-    """True when this exact reply was already sent to conv recently.
+_FUZZY_MIN_CHARS = 20      # min normalized length before similarity applies
+_SIMILAR_THRESHOLD = 0.82  # SequenceMatcher ratio treated as a reworded repeat
 
-    Guards the observed failure mode: a wait-turn reply landing 0.5s
-    before a batch turn, the model not seeing it in the records and
-    saying the same thing twice.
+
+def _prev_is_similar(prev: str, key: str) -> bool:
+    if abs(len(prev) - len(key)) > max(len(prev), len(key)) * 0.4:
+        return False
+    return difflib.SequenceMatcher(None, prev, key).ratio() >= _SIMILAR_THRESHOLD
+
+
+def is_repeat(conv: str, text: str) -> bool:
+    """True when this reply (or a close paraphrase) was recently sent.
+
+    Guards two observed failure modes: a wait-turn reply landing 0.5s
+    before a batch turn (exact duplicate), and a queued second turn
+    regenerating the same answer with reworded sentences (paraphrase).
     """
     key = _normalize(text)
     if not key:
         return False
     now = time.time()
-    return any(
-        now - ts <= _REPEAT_WINDOW and prev == key
-        for ts, prev in _recent_replies.get(conv, [])
-    )
+    for ts, prev in _recent_replies.get(conv, []):
+        if now - ts > _REPEAT_WINDOW:
+            continue
+        if prev == key:
+            return True
+        # paraphrase detection only for substantial texts, where short
+        # genuine replies ("在的哦" vs "在的哦~") would false-positive
+        if len(key) >= _FUZZY_MIN_CHARS and _prev_is_similar(prev, key):
+            return True
+    return False
 
 
 def _remember_reply(conv: str, text: str) -> None:

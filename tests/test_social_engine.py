@@ -162,12 +162,26 @@ async def main():  # noqa: C901
     assert sender.is_repeat(conv_r, reply)
     assert sender.is_repeat(conv_r, "呵呵，天使哪有我这么爱走神的 ")  # whitespace-insensitive
     assert not sender.is_repeat(conv_r, "今天天气不错")
+    # paraphrase defense: a queued second turn rewording the same answer
+    reply_a = ("写得真好，尤其那句「只要一回头，就是个无比安心的地方」"
+               "——比我昨天说的那些都准。")
+    reply_b = ("写得真好，尤其那句「只要一回头，就是个无比安心的地方」"
+               "——比我之前说的那些都准。")
+    assert not sender.is_repeat(conv_r, reply_a)
+    sender._remember_reply(conv_r, reply_a)
+    assert sender.is_repeat(conv_r, reply_b), "paraphrase not caught"
+    # short replies stay exact-only (no false positives on tone variants)
+    assert not sender.is_repeat(conv_r, "在的哦")
+    sender._remember_reply(conv_r, "在的哦")
+    assert sender.is_repeat(conv_r, "在的哦")
+    assert not sender.is_repeat(conv_r, "在的哦~")
+    sender._recent_replies.pop(conv_r, None)
     while not sender._queue.empty():
         sender._queue.get_nowait()
         sender._queue.task_done()
     sender._recent_replies.pop(conv_r, None)
     ok += 1
-    print("[5b] sender OK: repeat guard detects enqueue-time duplicates")
+    print("[5b] sender OK: repeat guard exact+paraphrase, enqueue-time duplicates")
 
     # ---- 6. action_loop: marker parsing ----
     p = action_loop.parse_actions
@@ -204,6 +218,20 @@ async def main():  # noqa: C901
     assert r.text == "（划掉）其实我想说的是这个", r
     ok += 1
     print("[6] parse_actions OK: SILENT/WAIT/WAKE/STICKER/POKE + text strip + action-prose defense")
+
+    # ---- 6b. stale re-trigger guard (seen_ts watermark) ----
+    conv_s = "private:stale-test"
+    participation._states.pop(conv_s, None)
+    assert participation.has_unseen_messages(conv_s)      # never seen -> run
+    participation.mark_seen(conv_s, 1000.0)
+    st_s = participation._get(conv_s)
+    st_s.last_msg_ts = 1000.0
+    assert not participation.has_unseen_messages(conv_s)  # nothing new -> skip
+    st_s.last_msg_ts = 1060.0
+    assert participation.has_unseen_messages(conv_s)      # newer message -> run
+    participation._states.pop(conv_s, None)
+    ok += 1
+    print("[6b] stale re-trigger guard OK: watermark skip semantics")
 
     # ---- 7. participation: triggers + state machine ----
     action_loop.run_turn = fake_run_turn  # stub external effects

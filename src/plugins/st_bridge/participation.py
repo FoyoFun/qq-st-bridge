@@ -53,6 +53,9 @@ class ConvSocialState:
     wake_day: str = ""
     # re-trigger deferred because a turn was already running
     pending_reason: str = ""
+    # newest other-message ts a completed turn actually had in its
+    # observation — the watermark that detects stale re-triggers
+    seen_ts: float = 0.0
 
 
 _states: dict[str, ConvSocialState] = {}
@@ -100,6 +103,32 @@ def _fresh_from_others(conv: str, since_ts: float) -> list[collector.ConvMsg]:
 # ---------------------------------------------------------------------------
 # Turn scheduling
 # ---------------------------------------------------------------------------
+
+def newest_other_ts(conv: str) -> float:
+    """Newest message-from-others ts currently in the collector buffer."""
+    msgs = [m for m in collector.messages_since(conv, 0.0) if not m.is_self]
+    return max((m.ts for m in msgs), default=0.0)
+
+
+def has_unseen_messages(conv: str) -> bool:
+    """True when others sent something no completed turn has observed.
+
+    `seen_ts` is stamped from the observation snapshot of the last
+    successful turn; `last_msg_ts` tracks the newest other-message fed.
+    A turn for a message both watermarks already cover is a stale
+    re-trigger (double-tap private messages) and must be skipped.
+    """
+    st = _get(conv)
+    if st.seen_ts <= 0.0:
+        return True
+    return st.last_msg_ts > st.seen_ts
+
+
+def mark_seen(conv: str, ts: float) -> None:
+    """Stamp the observation watermark after a turn generated successfully."""
+    st = _get(conv)
+    st.seen_ts = max(st.seen_ts, ts)
+
 
 def schedule_turn(conv: str, tier: str, reason: str, delay: float) -> None:
     """Schedule one generation turn after a human-like delay.

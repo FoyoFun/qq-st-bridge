@@ -202,6 +202,17 @@ layers keep her from interrupting with "说实话什么/说完整":
 11. **Chat history trim**: action_loop sends the last 80 ST history
     entries per generation; observation records come from the rolling
     buffer, old topics fade naturally.
+12. **Duplicate turns**: two rapid private/@ messages each schedule a
+    turn. The second is skipped at generation time unless newer unseen
+    messages exist (`participation.seen_ts` watermark, stamped after a
+    successful generation); `sender.is_repeat` additionally drops
+    exact repeats and close paraphrases (SequenceMatcher ≥ 0.82 on
+    ≥20-char replies) within a 10-minute window.
+13. **Silence rendering**: silent turns are saved to ST chat memory as
+    `[SILENT]` — never as prose. A prose placeholder once sat in memory
+    as few-shot and taught the model to emit "（看了眼群消息，没说话）"
+    instead of the marker; `parse_actions` now downgrades pure
+    action-prose output to silence as a defense.
 
 ## Common Operations
 
