@@ -1,0 +1,41 @@
+scripts/deploy_st.py
+  s_2bc033df3d5e36::t_228d05c4b387c5 163-167
+  s_2bc033df3d5e36::t_0b836fee011970 99-124,126,132-133,135-136
+  s_2bc033df3d5e36::t_df4f9bb546676d 160-162
+  s_2bc033df3d5e36::t_9434c812ea3ed0 178
+  s_2bc033df3d5e36::t_5deeee17c5896d 263
+  s_2bc033df3d5e36::t_a5f9121297e930 125,127-131,134,137-159,168-177,179-207
+  s_2bc033df3d5e36::t_560c88ef74085c 6,17-20,26,30-31,35
+src/plugins/st_bridge/st_api.py
+  s_2bc033df3d5e36::t_f8abcfe93b0290 160-163
+CLAUDE.md
+  s_2bc033df3d5e36::t_15e368c739c3d7 187-196
+  s_2bc033df3d5e36::t_b70ef8adb52509 230
+  s_2bc033df3d5e36::t_d84dad69b7d96c 238
+st/plugins/nb-qq-bot/index.js
+  s_2bc033df3d5e36::t_470962d3a329f6 173-177,181-189
+  s_2bc033df3d5e36::t_3aea50b3d02cd1 406-408
+  s_2bc033df3d5e36::t_7bf3635946fa29 472
+  s_2bc033df3d5e36::t_ab1d99e9c9cf89 172,178-180,190-205
+  s_2bc033df3d5e36::t_6fbb7067740257 206-210,218-219,225-226,228-229,231,234-237,244-311
+  s_2bc033df3d5e36::t_16cd9a38843f4c 399-401,403-405
+  s_2bc033df3d5e36::t_3e6764412855a1 468-471,473
+st/plugins/nb-qq-bot/README.md
+  s_2bc033df3d5e36::t_9ab7b1342fe079 40,43-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "63e7dff902d9f0672747e16e2077179238066bf9",
+  "prompts": {},
+  "sessions": {
+    "s_2bc033df3d5e36": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b814e3a3-6a6c-4a2f-8725-6ce084ede526",
+        "model": "glm-5.3-flash"
+      },
+      "human_author": "v_runxwang <v_runxwang@tencent.com>"
+    }
+  }
+}
