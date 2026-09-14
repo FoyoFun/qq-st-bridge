@@ -184,8 +184,16 @@ layers keep her from interrupting with "说实话什么/说完整":
 3. **Global ST lock** (`concurrency.py`): one ST request in flight across
    all conversations; per-conversation turn lock lives in
    `participation.lock_for`.
-4. **Model names**: model comes from ST's connection settings (read by the
-   plugin), not the preset or `.env`.
+4. **Model names**: resolved per request by the plugin, in order — explicit
+   `model` in the request (`.env` `ST_MODEL` override) → ST's live UI state
+   (`oai_settings.<source>_model` from `/api/settings/get` — whatever the ST
+   interface is currently connected to) → connection-profile files on disk
+   (legacy fallback). The pick is validated against the live model list
+   (`/api/backends/chat-completions/status`, cached 10 min): an upstream
+   rename falls back to the closest tier match (flash/pro/…) with a logged
+   warning instead of a 400. Nothing model-related is baked in at deploy
+   time; `deploy_st.py` prints a connection check afterwards so a fresh
+   deployment immediately shows which source/model the bot will use.
 5. **ST plugins must be enabled**: `config.yaml` needs `enableServerPlugins: true`.
 6. **Preset format**: the plugin reads the ST-native `prompts[]` +
    `prompt_order` — edit the preset in ST's UI or edit the repo JSON and
@@ -219,7 +227,7 @@ layers keep her from interrupting with "说实话什么/说完整":
 ### Start everything
 ```bash
 # 1. SillyTavern
-cd /d/TempFiles/SillyTavern && node server.js
+cd /c/TempProgram/SillyTavern && node server.js
 
 # 2. Bot
 cd /d/Projects/python/qq-st-bridge && python bot.py
@@ -227,7 +235,7 @@ cd /d/Projects/python/qq-st-bridge && python bot.py
 
 ### Deploy ST-side changes (plugin / preset / character card)
 ```bash
-python scripts/deploy_st.py            # defaults to D:/TempFiles/SillyTavern
+python scripts/deploy_st.py            # defaults to C:/TempProgram/SillyTavern
 # restart SillyTavern afterwards so the plugin code reloads
 ```
 

@@ -37,7 +37,27 @@ POST /api/plugins/nb-qq-bot/generate
 | `qq_chat_behavior` | — | QQ 群聊行为指令，注入到 system prompt 最前面 |
 | `max_response_length` | — | 回复最大 token 数（默认 800） |
 | `chat_completion_source` | — | AI 后端类型（默认 `deepseek`） |
+| `model` | — | 强制指定模型；一般留空，见下方「模型选择」 |
 | `stream` | — | 是否流式（默认 false） |
+
+## 模型选择
+
+插件每次请求时按以下顺序确定模型，**无需在项目里配置任何模型名**：
+
+1. 请求里的显式 `model` 字段（手动覆盖，一般不用）
+2. **ST 界面当前的连接设置** — `/api/settings/get` 返回的
+   `oai_settings.<source>_model`（即 ST 网页 UI 里选中的模型）
+3. 连接预设文件兜底（`data/<user>/OpenAI Settings/*.json` 里的
+   `<source>_model`，兼容旧数据）
+
+选定后会对照该后端**当前实际提供的模型列表**
+（`/api/backends/chat-completions/status`，结果缓存 10 分钟）校验：
+若模型已被上游改名/下架，自动退到最接近的档位（如 `*-flash` →
+`*-flash`），并在 ST 控制台输出警告，而不是直接报 400。
+
+新环境部署：只需在 ST 网页 UI 里连好 API（选后端、填 key、选模型），
+机器人即自动跟随；`scripts/deploy_st.py` 部署结束时也会打印当前
+连接检查结果。
 
 ### 响应
 

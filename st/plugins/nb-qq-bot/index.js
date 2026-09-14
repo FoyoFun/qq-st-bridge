@@ -169,9 +169,45 @@ async function fetchCsrfToken(cookieJar) {
 // ---------------------------------------------------------------------------
 
 /**
- * Read the model for a given source from ST's OpenAI Settings files.
- * Each connection profile is stored as a JSON file under data/<user>/OpenAI Settings/.
- * The model is stored as `{source}_model` (e.g. `deepseek_model`).
+ * Read the model ST's UI would use right now, from the live settings
+ * payload (/api/settings/get). That response carries the full settings.json
+ * content as a string under `settings`; the UI's connection state lives in
+ * its `oai_settings` object. Same state the ST interface loads, so whatever
+ * is configured there applies here automatically — no per-environment
+ * config needed. Model keys are per source: `deepseek_model`, `openai_model`, …
+ */
+function readLiveModel(settings, source) {
+    if (!settings || typeof settings !== 'object' || !source) return null;
+    let live = null;
+    try {
+        const parsed = typeof settings.settings === 'string'
+            ? JSON.parse(settings.settings)
+            : settings;
+        live = parsed && typeof parsed === 'object' ? parsed.oai_settings : null;
+    } catch (e) {
+        return null; // unparsable settings — let the fallbacks handle it
+    }
+    if (!live || typeof live !== 'object') return null;
+    const found = live[source + '_model'];
+    if (!found) return null;
+    if (live.chat_completion_source !== source) {
+        console.log('[nb-qq-bot] Note: ST UI is on source "' + live.chat_completion_source
+            + '"; using its saved "' + source + '" model anyway: ' + found);
+    } else {
+        console.log('[nb-qq-bot] Resolved model from ST live settings: ' + found);
+    }
+    return found;
+}
+
+/**
+ * Fallback: read the model for a given source from ST's OpenAI Settings
+ * files on disk. Each connection profile is a JSON file under
+ * data/<user>/OpenAI Settings/ storing the model as `{source}_model`.
+ *
+ * Preference: a profile whose chat_completion_source matches the requested
+ * source. If none declares it, fall back to any profile carrying a non-empty
+ * `{source}_model` — profiles keep settings for many sources but only declare
+ * the one they were last saved with.
  */
 function readModelFromConnection(source) {
     if (!source) return null;
@@ -179,25 +215,98 @@ function readModelFromConnection(source) {
         const settingsDir = path.join(ST_ROOT, 'data', 'default-user', 'OpenAI Settings');
         if (!fs.existsSync(settingsDir)) return null;
         const files = fs.readdirSync(settingsDir).filter(function (f) { return f.endsWith('.json'); });
+        const modelField = source + '_model';
+        let loose = null;
         for (let i = 0; i < files.length; i++) {
             try {
                 const filePath = path.join(settingsDir, files[i]);
                 const raw = fs.readFileSync(filePath, 'utf8');
                 const data = JSON.parse(raw);
+                const found = data[modelField];
+                if (!found) continue;
                 if (data.chat_completion_source === source) {
-                    const modelField = source + '_model';
-                    const found = data[modelField];
-                    if (found) {
-                        console.log('[nb-qq-bot] Resolved model from connection "' + path.basename(files[i], '.json') + '": ' + found);
-                        return found;
-                    }
+                    console.log('[nb-qq-bot] Resolved model from connection "' + path.basename(files[i], '.json') + '": ' + found);
+                    return found;
                 }
+                if (!loose) loose = found;
             } catch (e) { /* skip unreadable files */ }
         }
+        if (loose) {
+            console.log('[nb-qq-bot] No profile declares source "' + source + '"; using its ' + modelField + ' anyway: ' + loose);
+        }
+        return loose;
     } catch (e) {
         console.warn('[nb-qq-bot] Failed to read connection settings:', e.message);
     }
     return null;
+}
+
+// Live model lists per source, cached briefly — validation must not add an
+// upstream roundtrip to every generation.
+const MODEL_LIST_TTL_MS = 10 * 60 * 1000;
+const _modelListCache = new Map(); // source -> { at: number, ids: string[] }
+
+/**
+ * Ask ST which models the given source currently offers
+ * (POST /api/backends/chat-completions/status → { data: [{ id }] }).
+ * Returns null when the list can't be fetched — callers then skip validation.
+ */
+async function fetchAvailableModels(source, csrfToken, cookieJar) {
+    if (!source) return null;
+    const cached = _modelListCache.get(source);
+    if (cached && (Date.now() - cached.at) < MODEL_LIST_TTL_MS) {
+        return cached.ids;
+    }
+    try {
+        const data = await internalPost('/api/backends/chat-completions/status', {
+            chat_completion_source: source,
+            reverse_proxy: '',
+        }, csrfToken, cookieJar);
+        const ids = (data && Array.isArray(data.data))
+            ? data.data
+                .filter(function (m) { return m && typeof m.id === 'string'; })
+                .map(function (m) { return m.id; })
+                .sort()
+            : null;
+        if (ids && ids.length > 0) {
+            _modelListCache.set(source, { at: Date.now(), ids: ids });
+        }
+        return ids;
+    } catch (e) {
+        console.warn('[nb-qq-bot] Could not list models for "' + source + '":', e.message);
+        return null;
+    }
+}
+
+const MODEL_TIER_WORDS = ['flash', 'pro', 'lite', 'mini', 'chat', 'reasoner'];
+
+/**
+ * Final model pick: keep `resolvedModel` when the source still offers it;
+ * otherwise fall back to the closest offered model (same tier word first),
+ * so an upstream rename degrades to a logged warning instead of a 400.
+ */
+async function resolveModel(resolvedModel, source, csrfToken, cookieJar) {
+    const available = await fetchAvailableModels(source, csrfToken, cookieJar);
+    if (!available || available.length === 0) {
+        return resolvedModel; // can't validate — send as-is
+    }
+    if (resolvedModel && available.indexOf(resolvedModel) >= 0) {
+        return resolvedModel;
+    }
+    let fallback = available[0];
+    if (resolvedModel) {
+        const lower = resolvedModel.toLowerCase();
+        const tier = MODEL_TIER_WORDS.find(function (w) { return lower.indexOf(w) >= 0; });
+        if (tier) {
+            const match = available.find(function (id) { return id.toLowerCase().indexOf(tier) >= 0; });
+            if (match) fallback = match;
+        }
+        console.warn('[nb-qq-bot] Model "' + resolvedModel + '" is no longer offered by "' + source + '".');
+    } else {
+        console.warn('[nb-qq-bot] No model configured for source "' + source + '".');
+    }
+    console.warn('[nb-qq-bot] Falling back to "' + fallback + '". Available: ' + available.join(', '));
+    return fallback;
 }
 
 // ---------------------------------------------------------------------------
@@ -287,11 +396,16 @@ async function handleGenerate(req, res) {
             max_tokens: max_response_length || preset.openai_max_tokens || preset.max_tokens || 500,
         };
 
-        // Model — use explicitly passed model, or read from ST connection settings
+        // Model — explicit override, else the model ST's UI is currently
+        // using, else profile files; validated against what the source
+        // currently offers so upstream renames degrade to a warning
         const effectiveSource = generatePayload.chat_completion_source;
-        const resolvedModel = model || readModelFromConnection(effectiveSource);
-        if (resolvedModel) {
-            generatePayload.model = resolvedModel;
+        const resolvedModel = model
+            || readLiveModel(settings, effectiveSource)
+            || readModelFromConnection(effectiveSource);
+        const finalModel = await resolveModel(resolvedModel, effectiveSource, csrfToken, cookieJar);
+        if (finalModel) {
+            generatePayload.model = finalModel;
         }
 
         // Generation parameters from preset
@@ -351,4 +465,9 @@ async function init(router) {
     console.log('[nb-qq-bot] Plugin initialized — /api/plugins/nb-qq-bot/generate');
 }
 
-module.exports = { info, init };
+// Internals exported for testing; ST itself only uses info/init.
+module.exports = {
+    info, init,
+    CookieJar, internalPost, fetchCsrfToken,
+    readLiveModel, readModelFromConnection, fetchAvailableModels, resolveModel,
+};

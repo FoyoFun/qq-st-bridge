@@ -157,7 +157,10 @@ async def plugin_generate(
                 "chat_completion_source": config.ST_CHAT_SOURCE,
                 "stream": False,
             }
-            # Don't send model — let ST use the preset's configured model
+            if config.ST_MODEL:
+                # Manual override — leave empty to follow ST's live
+                # connection settings (resolved by the plugin per request)
+                payload["model"] = config.ST_MODEL
 
             resp = await st_client.auth_post(
                 "/api/plugins/nb-qq-bot/generate", payload
