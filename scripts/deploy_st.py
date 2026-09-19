@@ -3,7 +3,7 @@
 Usage:
     python scripts/deploy_st.py [ST_ROOT]
 
-ST_ROOT defaults to C:/TempProgram/SillyTavern.
+ST_ROOT defaults to D:/TempFiles/SillyTavern.
 
 Copies:
   st/plugins/nb-qq-bot/*.js   -> <ST_ROOT>/plugins/nb-qq-bot/
@@ -32,7 +32,7 @@ import urllib.request
 import zlib
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_ST = r"C:\TempProgram\SillyTavern"
+DEFAULT_ST = r"D:\TempFiles\SillyTavern"
 
 
 def read_png_chunks(data: bytes) -> list[tuple[str, bytes]]:
